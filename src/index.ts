@@ -10,6 +10,8 @@ export type {
   HttpMethod,
   MapResult,
   ParamInfo,
+  ServiceInfo,
+  ServiceType,
 } from "./types.ts";
 export { EndpointIndex } from "./endpoint-index.ts";
 export {
@@ -18,3 +20,5 @@ export {
   formatNdjson,
   formatMarkdown,
 } from "./format.ts";
+export type { FormatOptions, GroupBy } from "./format.ts";
+export { detectServices } from "./services/index.ts";

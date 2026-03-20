@@ -6,11 +6,14 @@ import type {
   FrameworkId,
   MapResult,
   ScanContext,
+  ServiceInfo,
+  ServiceType,
 } from "./types.ts";
 import { EndpointIndex } from "./endpoint-index.ts";
 import { createScanContext, SKIP_DIRS } from "./scan-context.ts";
 import { getAllExtractors, getExtractor } from "./extractors/index.ts";
 import { isInternalPath } from "./utils.ts";
+import { detectServices, createResolver } from "./services/index.ts";
 
 export interface MapOptions {
   frameworkOverride?: FrameworkId;
@@ -20,6 +23,8 @@ export interface MapOptions {
 // ---------------------------------------------------------------------------
 // Framework detection — driven by extractor `detect` declarations
 // ---------------------------------------------------------------------------
+
+const GO_FRAMEWORKS: FrameworkId[] = ["gin", "echo", "fiber"];
 
 // Lock files can be 10MB+ — skip them for dep keyword scanning
 const DEP_FILENAMES = [
@@ -141,9 +146,8 @@ function detectFrameworks(repoPath: string, ctx: ScanContext): FrameworkId[] {
   }
 
   // net/http fallback: only if no other Go framework detected
-  const goFrameworks: FrameworkId[] = ["gin", "echo", "fiber"];
   if (
-    !goFrameworks.some((gf) => detected.includes(gf)) &&
+    !GO_FRAMEWORKS.some((gf) => detected.includes(gf)) &&
     existsSync(join(repoPath, "go.mod"))
   ) {
     for (const f of ctx.iterFiles([".go"])) {
@@ -159,6 +163,137 @@ function detectFrameworks(repoPath: string, ctx: ScanContext): FrameworkId[] {
 }
 
 // ---------------------------------------------------------------------------
+// Service-aware framework detection — scans within each service root
+// ---------------------------------------------------------------------------
+
+/**
+ * For repos with detected services (e.g. docker-compose monorepos),
+ * run framework detection within each service root. This finds frameworks
+ * that the root-level scan misses because dep files are nested too deep.
+ *
+ * Each service root is treated as if it were its own mini-repo:
+ * dep files are read, markers are checked, and frameworks are matched.
+ *
+ * The key difference from root-level detection: `requireBoth` is relaxed
+ * to dep-only matching. Being inside a known service root (identified by
+ * compose/workspace/sst detection) provides the boundary signal that
+ * markers normally provide — requiring both would be overly strict for
+ * services where the entry point file has a non-standard name.
+ */
+function detectFrameworksInServices(
+  repoPath: string,
+  services: ServiceInfo[],
+  ctx: ScanContext,
+  alreadyDetected: FrameworkId[],
+): FrameworkId[] {
+  const additional: FrameworkId[] = [];
+  const seen = new Set<FrameworkId>(alreadyDetected);
+
+  for (const svc of services) {
+    const svcPath = join(repoPath, svc.root);
+    if (!existsSync(svcPath)) continue;
+
+    const deps = readDepFiles(svcPath);
+    const depsLower = {
+      root: deps.root.toLowerCase(),
+      all: deps.all.toLowerCase(),
+    };
+    const childDirs = getChildDirs(svcPath);
+
+    for (const extractor of getAllExtractors()) {
+      if (!extractor.detect || seen.has(extractor.id)) continue;
+
+      if (typeof extractor.detect === "function") {
+        if (extractor.detect(svcPath, ctx)) {
+          additional.push(extractor.id);
+          seen.add(extractor.id);
+        }
+        continue;
+      }
+
+      // Within a known service root, relax requireBoth to dep-only.
+      // The service boundary itself is sufficient signal.
+      const detect = extractor.detect;
+      const relaxed = detect.requireBoth
+        ? { ...detect, requireBoth: false }
+        : detect;
+      if (matchDeclarative(relaxed, depsLower, svcPath, childDirs)) {
+        additional.push(extractor.id);
+        seen.add(extractor.id);
+      }
+    }
+
+    // net/http fallback within service root
+    if (
+      !GO_FRAMEWORKS.some((gf) => seen.has(gf)) &&
+      !seen.has("net_http") &&
+      existsSync(join(svcPath, "go.mod"))
+    ) {
+      for (const f of ctx.iterFiles([".go"])) {
+        const content = ctx.readFile(f);
+        if (content && /"net\/http"/.test(content)) {
+          additional.push("net_http");
+          seen.add("net_http");
+          break;
+        }
+      }
+    }
+  }
+
+  return additional;
+}
+
+// ---------------------------------------------------------------------------
+// Service type refinement — upgrades generic types using extracted endpoints
+// ---------------------------------------------------------------------------
+
+const FRAMEWORK_TO_SERVICE_TYPE: Partial<Record<FrameworkId, ServiceType>> = {
+  nextjs: "nextjs",
+  server_actions: "server_actions",
+  express: "express",
+  sst: "api_gateway",
+};
+
+function refineServiceTypes(
+  services: ServiceInfo[],
+  endpoints: EndpointInfo[],
+): ServiceInfo[] {
+  // Count frameworks per service
+  const fwCounts = new Map<string, Map<FrameworkId, number>>();
+  for (const ep of endpoints) {
+    if (!ep.service) continue;
+    let counts = fwCounts.get(ep.service);
+    if (!counts) {
+      counts = new Map();
+      fwCounts.set(ep.service, counts);
+    }
+    counts.set(ep.framework, (counts.get(ep.framework) ?? 0) + 1);
+  }
+
+  return services.map((svc) => {
+    if (svc.type !== "generic") return svc;
+    const counts = fwCounts.get(svc.name);
+    if (!counts) return svc;
+
+    // Use the most common framework's mapped type
+    let maxFw: FrameworkId | null = null;
+    let maxCount = 0;
+    for (const [fw, count] of counts) {
+      if (count > maxCount) {
+        maxFw = fw;
+        maxCount = count;
+      }
+    }
+
+    if (maxFw) {
+      const mapped = FRAMEWORK_TO_SERVICE_TYPE[maxFw];
+      if (mapped) return { ...svc, type: mapped };
+    }
+    return svc;
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Main mapper
 // ---------------------------------------------------------------------------
 
@@ -166,10 +301,26 @@ export function map(repoPath: string, options: MapOptions = {}): MapResult {
   const resolved = resolve(repoPath);
   const ctx = createScanContext(resolved);
 
+  // 1. Detect services first — needed to enhance framework detection
+  const services = detectServices(resolved, ctx);
+
+  // 2. Detect frameworks at repo root
   const frameworks = options.frameworkOverride
     ? [options.frameworkOverride]
     : detectFrameworks(resolved, ctx);
 
+  // 3. Enhance: scan within service roots for frameworks the root scan missed
+  if (!options.frameworkOverride && services.length > 0) {
+    const extra = detectFrameworksInServices(
+      resolved,
+      services,
+      ctx,
+      frameworks,
+    );
+    frameworks.push(...extra);
+  }
+
+  // 4. Extract endpoints
   const endpoints: EndpointInfo[] = [];
 
   for (const fw of frameworks) {
@@ -192,6 +343,15 @@ export function map(repoPath: string, options: MapOptions = {}): MapResult {
       }
     }
   }
+
+  // 5. Assign endpoints to services
+  const resolveService = createResolver(services);
+  for (const ep of endpoints) {
+    ep.service = resolveService(ep.file);
+  }
+
+  // 6. Refine service types from extracted endpoint frameworks
+  const refinedServices = refineServiceTypes(services, endpoints);
 
   // Mark internal, dedup, filter, sort
   for (const ep of endpoints) ep.internal = isInternalPath(ep.path);
@@ -217,6 +377,7 @@ export function map(repoPath: string, options: MapOptions = {}): MapResult {
     repoPath: resolved,
     frameworks,
     endpoints: new EndpointIndex(filtered),
+    services: refinedServices,
     filesScanned: ctx.filesScanned,
   };
 }

@@ -19,6 +19,22 @@ export type HttpMethod =
   | "WS"
   | "ACTION";
 
+export type ServiceType =
+  | "nextjs"
+  | "lambda"
+  | "ecs"
+  | "server_actions"
+  | "express"
+  | "api_gateway"
+  | "static"
+  | "generic";
+
+export interface ServiceInfo {
+  name: string;
+  type: ServiceType;
+  root: string;
+}
+
 export interface EndpointInfo {
   method: HttpMethod;
   path: string;
@@ -29,12 +45,14 @@ export interface EndpointInfo {
   params: ParamInfo[];
   auth: string[];
   internal: boolean;
+  service?: string;
 }
 
 export interface MapResult {
   repoPath: string;
   frameworks: FrameworkId[];
   endpoints: EndpointIndex;
+  services: ServiceInfo[];
   filesScanned: number;
 }
 

@@ -13,7 +13,9 @@ import {
   formatMarkdown,
   formatNdjson,
 } from "./format.ts";
+import type { GroupBy, FormatOptions } from "./format.ts";
 import type { FrameworkId, MapResult } from "./types.ts";
+import { EndpointIndex } from "./endpoint-index.ts";
 
 // ---------------------------------------------------------------------------
 // Exit codes — 0 success, 1 runtime error, 2 usage error
@@ -25,7 +27,9 @@ const EXIT_USAGE = 2;
 
 type OutputFormat = "table" | "json" | "ndjson" | "markdown";
 
-const FORMATTERS: Record<OutputFormat, (r: MapResult) => string> = {
+type Formatter = (r: MapResult, o?: FormatOptions) => string;
+
+const FORMATTERS: Record<OutputFormat, Formatter> = {
   table: formatTable,
   json: formatJson,
   ndjson: formatNdjson,
@@ -45,6 +49,8 @@ const USAGE = `
 
   Options:
     --framework <name>    Force a specific framework
+    --group-by <key>      Group output by: auto, service, framework (default: auto)
+    --service <name>      Show only endpoints from a specific service
     --include-internal    Include internal routes (/health, /metrics, etc.)
     -o, --output <path>   Write output to a file
     -h, --help            Show this help
@@ -53,6 +59,8 @@ const USAGE = `
     surface map ./my-project
     surface map ./my-project --json
     surface map ./my-project --ndjson | jq 'select(.method == "POST")'
+    surface map ./monorepo --group-by service
+    surface map ./monorepo --service api --json
     surface map https://github.com/owner/repo --framework express
 
   Exit codes:
@@ -69,6 +77,8 @@ interface ParsedArgs {
   command?: string;
   target?: string;
   framework?: FrameworkId;
+  groupBy: GroupBy;
+  serviceFilter?: string;
   includeInternal: boolean;
   format: OutputFormat;
   output?: string;
@@ -79,6 +89,7 @@ function parseArgs(args: string[]): ParsedArgs {
   const parsed: ParsedArgs = {
     includeInternal: false,
     format: "table",
+    groupBy: "auto",
     help: false,
   };
 
@@ -98,6 +109,18 @@ function parseArgs(args: string[]): ParsedArgs {
       parsed.includeInternal = true;
     } else if (arg === "--framework" && i + 1 < args.length) {
       parsed.framework = args[++i] as FrameworkId;
+    } else if (arg === "--group-by" && i + 1 < args.length) {
+      const val = args[++i]!;
+      if (val === "auto" || val === "service" || val === "framework") {
+        parsed.groupBy = val;
+      } else {
+        console.error(
+          `Error: --group-by must be auto, service, or framework (got "${val}")`,
+        );
+        process.exit(EXIT_USAGE);
+      }
+    } else if (arg === "--service" && i + 1 < args.length) {
+      parsed.serviceFilter = args[++i];
     } else if ((arg === "-o" || arg === "--output") && i + 1 < args.length) {
       parsed.output = args[++i];
     } else if (!parsed.command) {
@@ -182,20 +205,37 @@ function main() {
       includeInternal: args.includeInternal,
     });
 
-    const output = FORMATTERS[args.format](result);
-
-    if (args.output) {
-      Bun.write(args.output, output);
-      console.error(`Results saved to ${args.output}`);
-    } else {
-      console.log(output);
+    // Apply --service filter
+    let finalResult = result;
+    if (args.serviceFilter) {
+      const svcName = args.serviceFilter;
+      const filtered = result.endpoints.all.filter(
+        (ep) => ep.service === svcName,
+      );
+      finalResult = {
+        ...result,
+        endpoints: new EndpointIndex(filtered),
+      };
     }
+
+    const formatOpts: FormatOptions = { groupBy: args.groupBy };
+    const output = FORMATTERS[args.format](finalResult, formatOpts);
+    writeOutput(output, args.output);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(`Error: scan failed\n  ${msg}`);
     process.exit(EXIT_ERROR);
   } finally {
     cleanup?.();
+  }
+}
+
+function writeOutput(output: string, path?: string) {
+  if (path) {
+    Bun.write(path, output);
+    console.error(`Results saved to ${path}`);
+  } else {
+    console.log(output);
   }
 }
 

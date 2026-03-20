@@ -112,8 +112,9 @@ export function endpoint(e: {
   framework: FrameworkId;
   params?: ParamInfo[];
   auth?: string[];
+  service?: string;
 }): EndpointInfo {
-  return {
+  const ep: EndpointInfo = {
     method: e.method as HttpMethod,
     path: e.path,
     handler: e.handler,
@@ -124,4 +125,6 @@ export function endpoint(e: {
     auth: e.auth ?? [],
     internal: false,
   };
+  if (e.service) ep.service = e.service;
+  return ep;
 }

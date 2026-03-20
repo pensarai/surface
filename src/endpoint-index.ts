@@ -15,7 +15,9 @@ export class EndpointIndex {
   private _byFramework: Map<string, EndpointInfo[]> | null = null;
   private _byFile: Map<string, EndpointInfo[]> | null = null;
   private _byMethod: Map<string, EndpointInfo[]> | null = null;
+  private _byService: Map<string, EndpointInfo[]> | null = null;
   private _fwCounts: Map<string, number> | null = null;
+  private _svcCounts: Map<string, number> | null = null;
 
   constructor(endpoints: EndpointInfo[]) {
     this._endpoints = endpoints;
@@ -55,6 +57,35 @@ export class EndpointIndex {
       }
     }
     return this._fwCounts;
+  }
+
+  // -- Service index --
+
+  groupByService(): Map<string, EndpointInfo[]> {
+    if (!this._byService) {
+      this._byService = new Map();
+      for (const ep of this._endpoints) {
+        const key = ep.service ?? "";
+        const list = this._byService.get(key) ?? [];
+        list.push(ep);
+        this._byService.set(key, list);
+      }
+    }
+    return this._byService;
+  }
+
+  byService(service: string): EndpointInfo[] {
+    return this.groupByService().get(service) ?? [];
+  }
+
+  serviceCounts(): Map<string, number> {
+    if (!this._svcCounts) {
+      this._svcCounts = new Map();
+      for (const [svc, eps] of this.groupByService()) {
+        if (svc) this._svcCounts.set(svc, eps.length);
+      }
+    }
+    return this._svcCounts;
   }
 
   // -- File index (for impact command) --
