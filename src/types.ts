@@ -67,6 +67,7 @@ export type FrameworkId =
   | "echo"
   | "fiber"
   | "net_http"
+  | "actix"
   | "spring"
   | "rails"
   | "laravel"

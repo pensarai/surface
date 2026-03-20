@@ -36,6 +36,7 @@ const DEP_FILENAMES = [
   "Pipfile",
   "package.json",
   "go.mod",
+  "Cargo.toml",
   "pom.xml",
   "build.gradle",
   "build.gradle.kts",

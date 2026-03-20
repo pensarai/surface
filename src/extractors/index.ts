@@ -6,6 +6,7 @@ import { express } from "./express.ts";
 import { nestjs } from "./nestjs.ts";
 import { nextjs } from "./nextjs.ts";
 import { gin, echo, fiber, netHttp } from "./go.ts";
+import { actix } from "./actix.ts";
 import { spring } from "./spring.ts";
 import { rails } from "./rails.ts";
 import { laravel } from "./laravel.ts";
@@ -24,6 +25,7 @@ const ALL_EXTRACTORS: Extractor[] = [
   echo,
   fiber,
   netHttp,
+  actix,
   spring,
   rails,
   laravel,
