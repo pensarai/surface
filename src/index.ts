@@ -5,9 +5,13 @@
 export { map } from "./mapper.ts";
 export type { MapOptions } from "./mapper.ts";
 export type {
+  AffectedEndpoint,
+  DiffHunk,
   EndpointInfo,
+  FunctionDef,
   FrameworkId,
   HttpMethod,
+  ImpactResult,
   MapResult,
   ParamInfo,
   ServiceInfo,
@@ -20,5 +24,15 @@ export {
   formatNdjson,
   formatMarkdown,
 } from "./format.ts";
+export {
+  formatImpactTable,
+  formatImpactJson,
+  formatImpactNdjson,
+  formatImpactMarkdown,
+} from "./format-impact.ts";
 export type { FormatOptions, GroupBy } from "./format.ts";
 export { detectServices } from "./services/index.ts";
+export { impact } from "./impact.ts";
+export type { ImpactOptions } from "./impact.ts";
+
+export { findFunctions } from "./function-finder.ts";

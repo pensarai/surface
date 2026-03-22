@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import { resolve } from "path";
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { execFileSync } from "child_process";
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
@@ -13,9 +13,17 @@ import {
   formatMarkdown,
   formatNdjson,
 } from "./format.ts";
+import {
+  formatImpactTable,
+  formatImpactJson,
+  formatImpactNdjson,
+  formatImpactMarkdown,
+} from "./format-impact.ts";
 import type { GroupBy, FormatOptions } from "./format.ts";
-import type { FrameworkId, MapResult } from "./types.ts";
+import type { FrameworkId, ImpactResult, MapResult } from "./types.ts";
 import { EndpointIndex } from "./endpoint-index.ts";
+import { parseDiff } from "./diff.ts";
+import { impact } from "./impact.ts";
 
 // ---------------------------------------------------------------------------
 // Exit codes — 0 success, 1 runtime error, 2 usage error
@@ -36,23 +44,43 @@ const FORMATTERS: Record<OutputFormat, Formatter> = {
   markdown: formatMarkdown,
 };
 
+type ImpactFormatter = (r: ImpactResult) => string;
+
+const IMPACT_FORMATTERS: Record<OutputFormat, ImpactFormatter> = {
+  table: formatImpactTable,
+  json: formatImpactJson,
+  ndjson: formatImpactNdjson,
+  markdown: formatImpactMarkdown,
+};
+
 const USAGE = `
   surface — discover HTTP endpoints in source code
 
-  Usage:
-    surface map <target>
+  Commands:
+    surface map <target>                  Discover all endpoints
+    surface diff <target> --ref <ref>     Find endpoints affected by a diff
 
   Output formats:
     --json                Structured JSON with summary (for tools & agents)
     --ndjson              One JSON object per line (for streaming/piping)
     --markdown            Markdown table
 
-  Options:
+  Map options:
     --framework <name>    Force a specific framework
     --group-by <key>      Group output by: auto, service, framework (default: auto)
     --service <name>      Show only endpoints from a specific service
     --include-internal    Include internal routes (/health, /metrics, etc.)
     -o, --output <path>   Write output to a file
+
+  Diff options:
+    --ref <git-ref>       Compare against a git ref (branch, tag, commit)
+    --diff-file <path>    Read diff from a file instead of git
+    (stdin)               Pipe a diff: git diff main | surface diff .
+    --framework <name>    Force a specific framework
+    --include-internal    Include internal routes in results
+    -o, --output <path>   Write output to a file
+
+  General:
     -h, --help            Show this help
 
   Examples:
@@ -60,8 +88,10 @@ const USAGE = `
     surface map ./my-project --json
     surface map ./my-project --ndjson | jq 'select(.method == "POST")'
     surface map ./monorepo --group-by service
-    surface map ./monorepo --service api --json
-    surface map https://github.com/owner/repo --framework express
+    surface diff . --ref main
+    surface diff . --ref HEAD~1 --json
+    surface diff ./app --ref main --framework express
+    git diff main | surface diff . --json
 
   Exit codes:
     0  Success
@@ -82,6 +112,8 @@ interface ParsedArgs {
   includeInternal: boolean;
   format: OutputFormat;
   output?: string;
+  ref?: string;
+  diffFile?: string;
   help: boolean;
 }
 
@@ -121,6 +153,10 @@ function parseArgs(args: string[]): ParsedArgs {
       }
     } else if (arg === "--service" && i + 1 < args.length) {
       parsed.serviceFilter = args[++i];
+    } else if (arg === "--ref" && i + 1 < args.length) {
+      parsed.ref = args[++i];
+    } else if (arg === "--diff-file" && i + 1 < args.length) {
+      parsed.diffFile = args[++i];
     } else if ((arg === "-o" || arg === "--output") && i + 1 < args.length) {
       parsed.output = args[++i];
     } else if (!parsed.command) {
@@ -185,7 +221,7 @@ function main() {
     process.exit(EXIT_OK);
   }
 
-  if (args.command !== "map") {
+  if (args.command !== "map" && args.command !== "diff") {
     console.error(`Unknown command: ${args.command}`);
     console.error(USAGE);
     process.exit(EXIT_USAGE);
@@ -197,7 +233,15 @@ function main() {
     process.exit(EXIT_USAGE);
   }
 
-  const { path, cleanup } = resolveTarget(args.target);
+  if (args.command === "diff") {
+    runDiff(args);
+  } else {
+    runMap(args);
+  }
+}
+
+function runMap(args: ParsedArgs) {
+  const { path, cleanup } = resolveTarget(args.target!);
 
   try {
     const result = map(path, {
@@ -228,6 +272,92 @@ function main() {
   } finally {
     cleanup?.();
   }
+}
+
+function runDiff(args: ParsedArgs) {
+  const target = args.target!;
+
+  // --ref is not supported with remote URLs (shallow clone has no history)
+  if (
+    args.ref &&
+    (target.startsWith("http://") ||
+      target.startsWith("https://") ||
+      target.startsWith("git@"))
+  ) {
+    console.error(
+      "Error: --ref is not supported with remote URLs (shallow clones lack history)",
+    );
+    console.error(
+      "  Clone the repo locally first, then run: surface diff <path> --ref <ref>",
+    );
+    process.exit(EXIT_USAGE);
+  }
+
+  const { path, cleanup } = resolveTarget(target);
+
+  try {
+    // Resolve diff text from one of three sources
+    const diffText = resolveDiffText(args, path);
+    if (!diffText) {
+      console.error(
+        "Error: no diff provided. Use --ref <git-ref>, --diff-file <path>, or pipe via stdin",
+      );
+      process.exit(EXIT_USAGE);
+    }
+
+    const hunks = parseDiff(diffText);
+    const result = impact(path, hunks, {
+      frameworkOverride: args.framework,
+      includeInternal: args.includeInternal,
+    });
+
+    const output = IMPACT_FORMATTERS[args.format](result);
+    writeOutput(output, args.output);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error(`Error: diff analysis failed\n  ${msg}`);
+    process.exit(EXIT_ERROR);
+  } finally {
+    cleanup?.();
+  }
+}
+
+function resolveDiffText(args: ParsedArgs, targetPath: string): string | null {
+  // Priority 1: --ref — run git diff
+  if (args.ref) {
+    try {
+      return execFileSync("git", ["diff", args.ref], {
+        cwd: targetPath,
+        encoding: "utf-8",
+        maxBuffer: 50 * 1024 * 1024,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`Error: git diff failed for ref "${args.ref}"\n  ${msg}`);
+      process.exit(EXIT_ERROR);
+    }
+  }
+
+  // Priority 2: --diff-file
+  if (args.diffFile) {
+    const diffPath = resolve(args.diffFile);
+    if (!existsSync(diffPath)) {
+      console.error(`Error: diff file does not exist: ${diffPath}`);
+      process.exit(EXIT_ERROR);
+    }
+    return readFileSync(diffPath, "utf-8");
+  }
+
+  // Priority 3: stdin (only if piped, not interactive)
+  if (!process.stdin.isTTY) {
+    try {
+      return readFileSync("/dev/stdin", "utf-8");
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
 }
 
 function writeOutput(output: string, path?: string) {

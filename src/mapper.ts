@@ -4,6 +4,7 @@ import type {
   EndpointInfo,
   FrameworkDetect,
   FrameworkId,
+  MapRawResult,
   MapResult,
   ScanContext,
   ServiceInfo,
@@ -295,10 +296,13 @@ function refineServiceTypes(
 }
 
 // ---------------------------------------------------------------------------
-// Main mapper
+// Raw mapper — returns pre-dedup, pre-filter endpoints for impact analysis
 // ---------------------------------------------------------------------------
 
-export function map(repoPath: string, options: MapOptions = {}): MapResult {
+export function mapRaw(
+  repoPath: string,
+  options: MapOptions = {},
+): MapRawResult {
   const resolved = resolve(repoPath);
   const ctx = createScanContext(resolved);
 
@@ -354,12 +358,28 @@ export function map(repoPath: string, options: MapOptions = {}): MapResult {
   // 6. Refine service types from extracted endpoint frameworks
   const refinedServices = refineServiceTypes(services, endpoints);
 
-  // Mark internal, dedup, filter, sort
+  // Mark internal
   for (const ep of endpoints) ep.internal = isInternalPath(ep.path);
+
+  return {
+    repoPath: resolved,
+    frameworks,
+    endpoints,
+    services: refinedServices,
+    filesScanned: ctx.filesScanned,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Main mapper — dedup, filter, sort over raw results
+// ---------------------------------------------------------------------------
+
+export function map(repoPath: string, options: MapOptions = {}): MapResult {
+  const raw = mapRaw(repoPath, options);
 
   const seen = new Set<string>();
   const unique: EndpointInfo[] = [];
-  for (const ep of endpoints) {
+  for (const ep of raw.endpoints) {
     const key = `${ep.method}::${ep.path}`;
     if (!seen.has(key)) {
       seen.add(key);
@@ -375,10 +395,10 @@ export function map(repoPath: string, options: MapOptions = {}): MapResult {
   );
 
   return {
-    repoPath: resolved,
-    frameworks,
+    repoPath: raw.repoPath,
+    frameworks: raw.frameworks,
     endpoints: new EndpointIndex(filtered),
-    services: refinedServices,
-    filesScanned: ctx.filesScanned,
+    services: raw.services,
+    filesScanned: raw.filesScanned,
   };
 }

@@ -48,6 +48,14 @@ export interface EndpointInfo {
   service?: string;
 }
 
+export interface MapRawResult {
+  repoPath: string;
+  frameworks: FrameworkId[];
+  endpoints: EndpointInfo[];
+  services: ServiceInfo[];
+  filesScanned: number;
+}
+
 export interface MapResult {
   repoPath: string;
   frameworks: FrameworkId[];
@@ -99,4 +107,40 @@ export interface ScanContext {
   iterFiles(extensions: string[]): string[];
   rel(absolutePath: string): string;
   filesScanned: number;
+}
+
+// ---------------------------------------------------------------------------
+// Diff / Impact types
+// ---------------------------------------------------------------------------
+
+export interface DiffHunk {
+  file: string;
+  startLine: number;
+  endLine: number;
+}
+
+export interface FunctionDef {
+  name: string;
+  line: number;
+}
+
+export type ImpactReason = "direct" | "handler" | "file";
+
+export interface AffectedEndpoint {
+  endpoint: EndpointInfo;
+  matchedHunks: DiffHunk[];
+  reason: ImpactReason;
+  matchedFunction?: string;
+}
+
+export interface ImpactResult {
+  repoPath: string;
+  affected: AffectedEndpoint[];
+  summary: {
+    totalEndpoints: number;
+    affectedEndpoints: number;
+    filesChanged: number;
+    filesWithEndpoints: number;
+    hunksAnalyzed: number;
+  };
 }
