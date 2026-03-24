@@ -82,6 +82,8 @@ function matchFile(
   const content = readFileSafe(join(repoRoot, file));
   const funcs = content ? findFunctions(content, extname(file)) : [];
 
+  const firstFuncLine = funcs.length > 0 ? funcs[0]!.line : 0;
+
   for (const hunk of hunks) {
     // Tier 1: Territory match
     if (matchByTerritory(hunk, territories, matched)) continue;
@@ -89,7 +91,10 @@ function matchFile(
     // Tier 2: Handler match — find enclosing function, match to handler
     if (matchByHandler(hunk, funcs, endpoints, matched)) continue;
 
-    // Tier 3: File fallback — flag all endpoints in the file
+    // Tier 3: File fallback
+    // Hunk above first function def → likely imports/routing config → flag all
+    // Hunk inside an unmatched function → utility/middleware → flag all
+    // Both use "file" reason to signal lower confidence
     for (const ep of endpoints) {
       recordMatch(matched, ep, hunk, "file");
     }
