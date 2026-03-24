@@ -58,7 +58,7 @@ const USAGE = `
 
   Commands:
     surface map <target>                  Discover all endpoints
-    surface diff <target> --ref <ref>     Find endpoints affected by a diff
+    surface diff <target> --base <ref>     Find endpoints affected by a diff
 
   Output formats:
     --json                Structured JSON with summary (for tools & agents)
@@ -73,7 +73,9 @@ const USAGE = `
     -o, --output <path>   Write output to a file
 
   Diff options:
-    --ref <git-ref>       Compare against a git ref (branch, tag, commit)
+    --base <ref>          Base ref to compare from (commit, branch, tag)
+    --head <ref>          Head ref to compare to (default: HEAD)
+    --ref <git-ref>       Single ref (shorthand, e.g. main, HEAD~3, sha1..sha2)
     --diff-file <path>    Read diff from a file instead of git
     (stdin)               Pipe a diff: git diff main | surface diff .
     --framework <name>    Force a specific framework
@@ -88,9 +90,10 @@ const USAGE = `
     surface map ./my-project --json
     surface map ./my-project --ndjson | jq 'select(.method == "POST")'
     surface map ./monorepo --group-by service
+    surface diff . --base main --head feature-branch
+    surface diff . --base abc123 --head def456 --json
     surface diff . --ref main
-    surface diff . --ref HEAD~1 --json
-    surface diff ./app --ref main --framework express
+    surface diff . --ref HEAD~3 --json
     git diff main | surface diff . --json
 
   Exit codes:
@@ -113,6 +116,8 @@ interface ParsedArgs {
   format: OutputFormat;
   output?: string;
   ref?: string;
+  base?: string;
+  head?: string;
   diffFile?: string;
   help: boolean;
 }
@@ -155,6 +160,10 @@ function parseArgs(args: string[]): ParsedArgs {
       parsed.serviceFilter = args[++i];
     } else if (arg === "--ref" && i + 1 < args.length) {
       parsed.ref = args[++i];
+    } else if (arg === "--base" && i + 1 < args.length) {
+      parsed.base = args[++i];
+    } else if (arg === "--head" && i + 1 < args.length) {
+      parsed.head = args[++i];
     } else if (arg === "--diff-file" && i + 1 < args.length) {
       parsed.diffFile = args[++i];
     } else if ((arg === "-o" || arg === "--output") && i + 1 < args.length) {
@@ -277,18 +286,17 @@ function runMap(args: ParsedArgs) {
 function runDiff(args: ParsedArgs) {
   const target = args.target!;
 
-  // --ref is not supported with remote URLs (shallow clone has no history)
-  if (
-    args.ref &&
-    (target.startsWith("http://") ||
-      target.startsWith("https://") ||
-      target.startsWith("git@"))
-  ) {
+  // Git ref options are not supported with remote URLs (shallow clone has no history)
+  const isRemote =
+    target.startsWith("http://") ||
+    target.startsWith("https://") ||
+    target.startsWith("git@");
+  if ((args.ref || args.base) && isRemote) {
     console.error(
-      "Error: --ref is not supported with remote URLs (shallow clones lack history)",
+      "Error: --ref/--base/--head are not supported with remote URLs (shallow clones lack history)",
     );
     console.error(
-      "  Clone the repo locally first, then run: surface diff <path> --ref <ref>",
+      "  Clone the repo locally first, then run: surface diff <path> --base <ref> --head <ref>",
     );
     process.exit(EXIT_USAGE);
   }
@@ -323,7 +331,24 @@ function runDiff(args: ParsedArgs) {
 }
 
 function resolveDiffText(args: ParsedArgs, targetPath: string): string | null {
-  // Priority 1: --ref — run git diff
+  // Priority 1: --base/--head — compare two refs (commits, branches, tags)
+  if (args.base) {
+    const head = args.head ?? "HEAD";
+    const range = `${args.base}..${head}`;
+    try {
+      return execFileSync("git", ["diff", args.base, head], {
+        cwd: targetPath,
+        encoding: "utf-8",
+        maxBuffer: 50 * 1024 * 1024,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`Error: git diff failed for "${range}"\n  ${msg}`);
+      process.exit(EXIT_ERROR);
+    }
+  }
+
+  // Priority 2: --ref — single ref (diff against working tree, or range like main..HEAD)
   if (args.ref) {
     try {
       return execFileSync("git", ["diff", args.ref], {
