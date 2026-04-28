@@ -46,6 +46,13 @@ export interface EndpointInfo {
   auth: string[];
   internal: boolean;
   service?: string;
+  /** Repo-relative path of the handler's source file, when distinct from `file`
+   *  (e.g. SST routes declared in infra/ but implemented in packages/functions/). */
+  handlerFile?: string;
+  /** Repo-relative directory the handler belongs to (e.g. "packages/functions"),
+   *  used to assign endpoints to the correct service when `file` is the
+   *  declaration site rather than the handler. */
+  serviceRoot?: string;
 }
 
 export interface MapRawResult {

@@ -349,9 +349,20 @@ export function mapRaw(
     }
   }
 
-  // 5. Assign endpoints to services
+  // 5. Assign endpoints to services. Extractors can pre-set `serviceRoot`
+  // when the route declaration site doesn't live in the same package as the
+  // handler (e.g. SST routes declared in infra/ but handled in packages/...);
+  // in that case the service is resolved from the handler's package root.
   const resolveService = createResolver(services);
   for (const ep of endpoints) {
+    if (ep.service) continue;
+    if (ep.serviceRoot) {
+      const viaRoot = resolveService(ep.serviceRoot);
+      if (viaRoot) {
+        ep.service = viaRoot;
+        continue;
+      }
+    }
     ep.service = resolveService(ep.file);
   }
 

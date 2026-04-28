@@ -5,17 +5,7 @@ import type {
   ParamInfo,
 } from "./types.ts";
 
-const INTERNAL_PREFIXES = [
-  "/_",
-  "/internal/",
-  "/debug/",
-  "/health",
-  "/__",
-  "/metrics",
-  "/readyz",
-  "/livez",
-  "/startupz",
-];
+const INTERNAL_PREFIXES = ["/_", "/internal/", "/debug/", "/__"];
 
 const AUTH_PATTERNS = [
   /@login_required/i,
@@ -113,6 +103,8 @@ export function endpoint(e: {
   params?: ParamInfo[];
   auth?: string[];
   service?: string;
+  handlerFile?: string;
+  serviceRoot?: string;
 }): EndpointInfo {
   const ep: EndpointInfo = {
     method: e.method as HttpMethod,
@@ -126,5 +118,7 @@ export function endpoint(e: {
     internal: false,
   };
   if (e.service) ep.service = e.service;
+  if (e.handlerFile) ep.handlerFile = e.handlerFile;
+  if (e.serviceRoot) ep.serviceRoot = e.serviceRoot;
   return ep;
 }

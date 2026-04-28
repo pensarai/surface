@@ -1,6 +1,7 @@
 import { existsSync, readdirSync } from "fs";
-import { join, dirname } from "path";
+import { join } from "path";
 import type { ServiceInfo, ScanContext } from "../../types.ts";
+import { findPackageRoot } from "./sst-shared.ts";
 
 /**
  * Detect services from SST infrastructure definitions.
@@ -10,8 +11,9 @@ import type { ServiceInfo, ScanContext } from "../../types.ts";
  * "packages/functions/src/webhooks/stripe.handler" → "packages/functions")
  * and creates/upgrades an api_gateway service for it.
  *
- * Also maps the infra/ directory itself to the API service so SST-extracted
- * endpoints get assigned correctly.
+ * Endpoints extracted by the SST extractor get assigned to that service via
+ * the `serviceRoot` field on each endpoint (see src/extractors/sst.ts) — no
+ * synthetic `infra/` service is needed here.
  */
 export function detectSstServices(
   repoPath: string,
@@ -42,63 +44,17 @@ export function detectSstServices(
 
     for (const m of content.matchAll(handlerRe)) {
       const handlerPath = m[1]!;
-      // "packages/functions/src/webhooks/stripe.handler"
-      // → find the package root by looking for a directory with package.json
       const root = findPackageRoot(repoPath, handlerPath);
       if (root) handlerRoots.add(root);
     }
   }
 
-  const services: ServiceInfo[] = [];
-
   // Upgrade existing workspace services that serve as handler packages
-  for (const root of handlerRoots) {
-    services.push({
-      name: inferServiceName(root, existing),
-      type: "api_gateway",
-      root,
-    });
-  }
-
-  // Map infra/ to the first handler service so SST-extracted endpoints
-  // get assigned to it
-  if (handlerRoots.size > 0) {
-    const primaryRoot = [...handlerRoots][0]!;
-    const existingInfra = existing.find((s) => s.root === "infra");
-    if (!existingInfra) {
-      services.push({
-        name: inferServiceName(primaryRoot, existing),
-        type: "api_gateway",
-        root: "infra",
-      });
-    }
-  }
-
-  return services;
-}
-
-/**
- * Walk up from a handler file path to find the package root
- * (directory containing package.json).
- *
- * "packages/functions/src/webhooks/stripe.handler"
- * → checks packages/functions/src/webhooks/
- * → checks packages/functions/src/
- * → checks packages/functions/ ← has package.json → returns "packages/functions"
- */
-function findPackageRoot(repoPath: string, handlerPath: string): string | null {
-  // Convert handler notation: strip the .handler suffix and extension
-  const filePath = handlerPath.replace(/\.\w+$/, "");
-  let dir = dirname(filePath);
-
-  while (dir && dir !== "." && dir !== "/") {
-    if (existsSync(join(repoPath, dir, "package.json"))) {
-      return dir;
-    }
-    dir = dirname(dir);
-  }
-
-  return null;
+  return [...handlerRoots].map((root) => ({
+    name: inferServiceName(root, existing),
+    type: "api_gateway",
+    root,
+  }));
 }
 
 /**

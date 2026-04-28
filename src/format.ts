@@ -218,6 +218,7 @@ export function formatJson(result: MapResult, options?: FormatOptions): string {
         line: e.line,
         framework: e.framework,
       };
+      if (e.handlerFile) obj.handlerFile = e.handlerFile;
       if (e.service) obj.service = e.service;
       if (e.params.length) obj.params = e.params;
       if (e.auth.length) obj.auth = e.auth;
@@ -268,6 +269,7 @@ export function formatNdjson(
       line: e.line,
       framework: e.framework,
     };
+    if (e.handlerFile) obj.handlerFile = e.handlerFile;
     if (e.service) obj.service = e.service;
     if (e.params.length) obj.params = e.params;
     if (e.auth.length) obj.auth = e.auth;

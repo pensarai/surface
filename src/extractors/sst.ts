@@ -7,6 +7,10 @@ import {
   extractPathParams,
   normalizePath,
 } from "../utils.ts";
+import {
+  findPackageRoot,
+  resolveHandlerFile,
+} from "../services/detectors/sst-shared.ts";
 
 function detectSst(repoPath: string, ctx: ScanContext): boolean {
   // Check for sst.config.ts or "sst" in deps
@@ -78,18 +82,26 @@ export const sst: Extractor = {
 
         const fullPath = normalizePath(m[2]!.trim());
         const handlerMatch = handlerRe.exec(m[3]!);
+        const handlerPath = handlerMatch?.[1];
+
+        const handlerFile = handlerPath
+          ? (resolveHandlerFile(ctx.repoPath, handlerPath) ?? undefined)
+          : undefined;
+        const serviceRoot = handlerPath
+          ? (findPackageRoot(ctx.repoPath, handlerPath) ?? undefined)
+          : undefined;
 
         endpoints.push(
           endpoint({
             method: httpMethod,
             path: fullPath,
-            handler: handlerMatch
-              ? handlerMatch[1]!.split(".").pop()!
-              : "<lambda>",
+            handler: handlerPath ? handlerPath.split(".").pop()! : "<lambda>",
             file: rel,
             line: lines.lineAt(m.index),
             framework: "sst",
             params: extractPathParams(fullPath),
+            handlerFile,
+            serviceRoot,
           }),
         );
       }
