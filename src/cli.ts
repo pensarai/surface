@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import { resolve } from "path";
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, writeFileSync } from "fs";
 import { execFileSync } from "child_process";
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
@@ -387,7 +387,7 @@ function resolveDiffText(args: ParsedArgs, targetPath: string): string | null {
 
 function writeOutput(output: string, path?: string) {
   if (path) {
-    Bun.write(path, output);
+    writeFileSync(path, output);
     console.error(`Results saved to ${path}`);
   } else {
     console.log(output);

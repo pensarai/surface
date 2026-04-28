@@ -22,6 +22,18 @@ Given a repository, Surface:
 | PHP                   | Laravel                                                                   |
 | Specs                 | OpenAPI / Swagger (JSON + YAML)                                           |
 
+## Install
+
+```bash
+# Global CLI
+npm install -g @pensar/surface
+# or
+bun add -g @pensar/surface
+
+# As a library
+npm install @pensar/surface
+```
+
 ## Usage
 
 ```bash
@@ -90,6 +102,20 @@ The `--json` output includes a summary block for quick consumption:
 }
 ```
 
+## Programmatic API
+
+```ts
+import { map, type MapResult, type EndpointInfo } from "@pensar/surface";
+
+const result: MapResult = map("./my-project", { includeInternal: false });
+
+for (const endpoint of result.endpoints) {
+  console.log(`${endpoint.method} ${endpoint.path} (${endpoint.framework})`);
+}
+```
+
+The package exports `map`, `impact`, `detectServices`, `findFunctions`, the formatters (`formatTable`, `formatJson`, `formatNdjson`, `formatMarkdown`, plus their `formatImpact*` siblings), and all public types from `src/index.ts`.
+
 ## Development
 
 Requires [Bun](https://bun.sh).
@@ -109,6 +135,12 @@ bun run lint
 
 # Format check
 bun run format:check
+
+# Build the npm publish bundle (dist/)
+bun run build
+
+# Smoke-test the built bundle
+bun run test:smoke
 ```
 
 ## Architecture
