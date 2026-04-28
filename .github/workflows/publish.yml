@@ -28,10 +28,6 @@ jobs:
 
       - run: bun run build
 
-      - name: Install fixture dependencies
-        working-directory: scripts/fixtures/tiny-express
-        run: npm install --no-audit --no-fund
-
       - run: node scripts/smoke-test.mjs
 
       - run: npm publish --access public --provenance
