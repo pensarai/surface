@@ -1,17 +1,40 @@
 {
-  "name": "surface",
+  "name": "@pensar/surface",
   "version": "0.1.0",
-  "module": "src/index.ts",
+  "description": "White-box endpoint discovery for source code repositories.",
   "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
   "bin": {
-    "surface": "src/cli.ts"
+    "surface": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pensarai/surface.git"
   },
   "scripts": {
+    "build": "tsup && node scripts/postbuild.mjs",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "tsc": "tsc --noEmit"
+    "tsc": "tsc --noEmit",
+    "test:smoke": "node scripts/smoke-test.mjs",
+    "prepublishOnly": "npm run build && npm run test:smoke"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -21,6 +44,7 @@
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-unused-imports": "^4.4.1",
     "prettier": "^3.8.1",
+    "tsup": "^8.5.0",
     "typescript-eslint": "^8.57.1"
   },
   "peerDependencies": {
