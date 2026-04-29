@@ -33,7 +33,11 @@ export const laravel: Extractor = {
       ctx.filesScanned++;
       const rel = ctx.rel(rf);
 
+      // routes/web.php = session-based page routes (Blade views, CSRF, session middleware).
+      // routes/api.php = stateless API routes (prefixed with /api by Laravel convention).
+      const isWeb = rf.endsWith("web.php");
       const filePrefix = rf.endsWith("api.php") ? "/api" : "";
+      const kind = isWeb ? "page" : "api";
 
       const groupPrefixes: string[] = [];
       for (const pm of content.matchAll(prefixGroupRe)) {
@@ -67,6 +71,7 @@ export const laravel: Extractor = {
             file: rel,
             line: lines.lineAt(m.index),
             framework: "laravel",
+            kind,
             params: extractPathParams(fullPath),
             auth: [...fileAuth],
           }),
