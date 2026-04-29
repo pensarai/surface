@@ -108,6 +108,7 @@ export function formatImpactJson(result: ImpactResult): string {
     affected: result.affected.map((a) => {
       const obj: Record<string, unknown> = {
         method: a.endpoint.method,
+        kind: a.endpoint.kind,
         path: a.endpoint.path,
         handler: a.endpoint.handler,
         file: a.endpoint.file,
@@ -151,6 +152,7 @@ export function formatImpactNdjson(result: ImpactResult): string {
   for (const a of result.affected) {
     const obj: Record<string, unknown> = {
       method: a.endpoint.method,
+      kind: a.endpoint.kind,
       path: a.endpoint.path,
       handler: a.endpoint.handler,
       file: a.endpoint.file,

@@ -59,7 +59,8 @@ export const fastapi: Extractor = {
         const funcParams = m[6]!;
         const line = lines.lineAt(m.index);
 
-        if (httpMethod === "WEBSOCKET") httpMethod = "WS";
+        const isWebSocket = httpMethod === "WEBSOCKET";
+        if (isWebSocket) httpMethod = "WS";
 
         const prefix = routerPrefixes[varName] ?? "";
         const fullPath = normalizePath(prefix + routePath);
@@ -83,6 +84,7 @@ export const fastapi: Extractor = {
         endpoints.push(
           endpoint({
             method: httpMethod,
+            kind: isWebSocket ? "websocket" : "api",
             path: fullPath,
             handler: funcName,
             file: rel,

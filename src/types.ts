@@ -19,6 +19,8 @@ export type HttpMethod =
   | "WS"
   | "ACTION";
 
+export type EndpointKind = "api" | "page" | "action" | "websocket";
+
 export type ServiceType =
   | "nextjs"
   | "lambda"
@@ -37,6 +39,7 @@ export interface ServiceInfo {
 
 export interface EndpointInfo {
   method: HttpMethod;
+  kind: EndpointKind;
   path: string;
   handler: string;
   file: string;
