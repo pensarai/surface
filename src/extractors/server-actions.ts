@@ -218,6 +218,7 @@ export const serverActions: Extractor = {
           endpoints.push(
             endpoint({
               method: "ACTION",
+              kind: "action",
               path: `/${moduleName}/${exp.name}`,
               handler: exp.name,
               file: rel,

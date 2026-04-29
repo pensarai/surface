@@ -1,5 +1,6 @@
 import type {
   EndpointInfo,
+  EndpointKind,
   FrameworkId,
   HttpMethod,
   ParamInfo,
@@ -100,6 +101,7 @@ export function endpoint(e: {
   file: string;
   line: number;
   framework: FrameworkId;
+  kind?: EndpointKind;
   params?: ParamInfo[];
   auth?: string[];
   service?: string;
@@ -108,6 +110,7 @@ export function endpoint(e: {
 }): EndpointInfo {
   const ep: EndpointInfo = {
     method: e.method as HttpMethod,
+    kind: e.kind ?? "api",
     path: e.path,
     handler: e.handler,
     file: e.file,

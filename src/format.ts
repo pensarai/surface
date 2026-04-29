@@ -212,6 +212,7 @@ export function formatJson(result: MapResult, options?: FormatOptions): string {
     endpoints: endpoints.all.map((e) => {
       const obj: Record<string, unknown> = {
         method: e.method,
+        kind: e.kind,
         path: e.path,
         handler: e.handler,
         file: e.file,
@@ -263,6 +264,7 @@ export function formatNdjson(
   for (const e of endpoints) {
     const obj: Record<string, unknown> = {
       method: e.method,
+      kind: e.kind,
       path: e.path,
       handler: e.handler,
       file: e.file,

@@ -8,6 +8,7 @@ export type {
   AffectedEndpoint,
   DiffHunk,
   EndpointInfo,
+  EndpointKind,
   FunctionDef,
   FrameworkId,
   HttpMethod,
