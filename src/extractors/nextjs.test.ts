@@ -1,9 +1,11 @@
-import { describe, expect, test } from "bun:test";
-import { resolve } from "path";
+import { describe, expect, test } from "vitest";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { nextjs } from "./nextjs.ts";
 import { createScanContext } from "../scan-context.ts";
 
-const FIXTURE = resolve(import.meta.dir, "../../scripts/fixtures/nextjs-pages");
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const FIXTURE = path.resolve(__dirname, "../../scripts/fixtures/nextjs-pages");
 
 function extract(fixturePath: string = FIXTURE) {
   const ctx = createScanContext(fixturePath);
