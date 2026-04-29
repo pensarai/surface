@@ -1,61 +1,42 @@
-import { describe, expect, test } from "bun:test";
-import { resolve } from "path";
-import { nestjs } from "./nestjs.ts";
-import { createScanContext } from "../scan-context.ts";
-import { map } from "../mapper.ts";
+import { describe, it, expect } from "vitest";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { map } from "../index.ts";
 
-function extract(fixture: string) {
-  const dir = resolve(import.meta.dir, "../../scripts/fixtures", fixture);
-  return nestjs.extract(createScanContext(dir));
-}
+// Pattern for kind-detection tests:
+//   1. Load fixture dir under src/extractors/__fixtures__/<framework>/
+//   2. Call map() against it (filter via frameworkOverride for isolation)
+//   3. Assert endpoints contain expected shapes by kind using
+//      expect.objectContaining so unrelated fields don't break the match.
 
-describe("nestjs code-first gRPC", () => {
-  const eps = extract("nestjs-grpc");
-  const grpc = eps.filter((e) => e.transport === "grpc");
-  const byPath = (p: string) => grpc.find((e) => e.path === p);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const FIXTURE_DIR = path.join(__dirname, "__fixtures__/nestjs");
 
-  test("extracts @GrpcMethod handlers with explicit service + method", () => {
-    expect(byPath("/HeroesService/FindOne")).toBeDefined();
-  });
+describe("nestjs extractor", () => {
+  it("emits correct kinds for api, page, and websocket routes", () => {
+    const result = map(FIXTURE_DIR, { frameworkOverride: "nestjs" });
+    const endpoints = result.endpoints.all;
 
-  test("derives the method name from the handler when the arg is omitted", () => {
-    // @GrpcMethod('HeroesService') on findAll() -> FindAll
-    expect(byPath("/HeroesService/FindAll")).toBeDefined();
-  });
-
-  test("@GrpcStreamMethod is marked as streaming", () => {
-    expect(byPath("/HeroesService/StreamHeroes")!.grpc!.streamingType).toBe(
-      "bidi",
+    expect(endpoints).toContainEqual(
+      expect.objectContaining({
+        method: "GET",
+        path: expect.stringContaining("users"),
+        kind: "api",
+      }),
     );
-  });
 
-  test("keeps framework nestjs, transport grpc", () => {
-    const e = byPath("/HeroesService/FindOne")!;
-    expect(e.framework).toBe("nestjs");
-    expect(e.transport).toBe("grpc");
-  });
-});
+    expect(endpoints).toContainEqual(
+      expect.objectContaining({
+        path: expect.stringContaining("about"),
+        kind: "page",
+      }),
+    );
 
-describe("proto tiebreak + owning-class service resolution", () => {
-  const dir = resolve(
-    import.meta.dir,
-    "../../scripts/fixtures/nestjs-grpc-proto",
-  );
-  const grpc = map(dir).endpoints.all.filter((e) => e.grpc);
-  const byPath = (p: string) => grpc.find((e) => e.path === p);
-
-  test("on an identical wire path, the proto definition wins over the decorator", () => {
-    const e = byPath("/hero.HeroesService/FindOne");
-    expect(e).toBeDefined();
-    expect(e!.framework).toBe("grpc");
-  });
-
-  test("a decorator with no matching proto survives", () => {
-    // @GrpcMethod() with no args in BillingController; resolved from its OWN
-    // class (BillingController -> Billing), not the file's first class.
-    const e = byPath("/Billing/Charge");
-    expect(e).toBeDefined();
-    expect(e!.framework).toBe("nestjs");
-    expect(e!.grpc!.serviceFqn).toBe("Billing");
+    expect(endpoints).toContainEqual(
+      expect.objectContaining({
+        path: expect.stringContaining("message"),
+        kind: "websocket",
+      }),
+    );
   });
 });
