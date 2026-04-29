@@ -39,4 +39,15 @@ describe("nestjs extractor", () => {
       }),
     );
   });
+
+  it("does not let @Render bleed onto sibling api methods", () => {
+    const result = map(FIXTURE_DIR, { frameworkOverride: "nestjs" });
+    const endpoints = result.endpoints.all;
+
+    // The "/data" endpoint sits directly below a @Render-decorated method
+    // in the same controller. Its kind must be "api", not "page".
+    const data = endpoints.find((e) => e.path.endsWith("data"));
+    expect(data).toBeDefined();
+    expect(data?.kind).toBe("api");
+  });
 });
