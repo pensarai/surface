@@ -10,6 +10,57 @@ import {
 const GO_EXTS = [".go"];
 const GO_GROUP_RE = /(\w+)\s*[:=]+\s*(\w+)\.Group\s*\(\s*['"]([^'"]+)['"]/g;
 
+// Websocket detection signals:
+//   - File imports "github.com/gorilla/websocket" (the de-facto Go ws lib).
+//   - Handler function body contains a `.Upgrade(` call (gorilla's upgrader,
+//     also gin's c.Upgrade()).
+// When both hold, the route is a websocket. Default remains "api".
+const GORILLA_WS_IMPORT_RE = /["']github\.com\/gorilla\/websocket["']/;
+const UPGRADE_CALL_RE = /\.\s*Upgrade\s*\(/;
+
+/**
+ * Build a per-file map of websocket-handler names. A file's handler is a
+ * websocket handler iff the file imports gorilla/websocket AND the function
+ * body contains `.Upgrade(`. Returns the set of handler names found across
+ * all scanned Go files (handler names are typically globally unique within
+ * a Go package, which is good enough for this heuristic).
+ */
+function findWebsocketHandlers(
+  ctx: Parameters<Extractor["extract"]>[0],
+  goFiles: string[],
+): Set<string> {
+  const wsHandlers = new Set<string>();
+  // Match a top-level `func Name(...)` or `func (recv T) Name(...)` and capture
+  // its body via balanced braces below.
+  const funcRe = /\bfunc\s+(?:\([^)]*\)\s+)?(\w+)\s*\([^)]*\)[^{]*\{/g;
+
+  for (const f of goFiles) {
+    const content = ctx.readFile(f);
+    if (!content) continue;
+    if (!GORILLA_WS_IMPORT_RE.test(content)) continue;
+
+    for (const m of content.matchAll(funcRe)) {
+      const name = m[1]!;
+      const bodyStart = m.index + m[0].length; // just past the opening `{`
+      // Walk forward to find the matching closing brace (naive — does not
+      // strip comments/strings, but Go's `{`/`}` balance in source is reliable
+      // enough for this heuristic).
+      let depth = 1;
+      let i = bodyStart;
+      const len = content.length;
+      while (i < len && depth > 0) {
+        const ch = content[i]!;
+        if (ch === "{") depth++;
+        else if (ch === "}") depth--;
+        i++;
+      }
+      const body = content.slice(bodyStart, i - 1);
+      if (UPGRADE_CALL_RE.test(body)) wsHandlers.add(name);
+    }
+  }
+  return wsHandlers;
+}
+
 function extractGoFramework(
   ctx: Parameters<Extractor["extract"]>[0],
   framework: FrameworkId,
@@ -17,6 +68,9 @@ function extractGoFramework(
 ): EndpointInfo[] {
   const endpoints: EndpointInfo[] = [];
   const goFiles = ctx.iterFiles(GO_EXTS);
+
+  // Pass 0: collect websocket handler names across the repo.
+  const wsHandlers = findWebsocketHandlers(ctx, goFiles);
 
   // Pass 1: find group definitions
   const groupPrefixes: Record<string, string> = {};
@@ -49,6 +103,11 @@ function extractGoFramework(
     if (!content) continue;
     const rel = ctx.rel(f);
     const lines = buildLineIndex(content);
+    // A route's handler is a ws handler if either:
+    //   (a) the resolved handler name is in wsHandlers, OR
+    //   (b) the route handler args themselves contain `.Upgrade(` (inline
+    //       upgrade) AND the file imports gorilla/websocket.
+    const fileImportsGorilla = GORILLA_WS_IMPORT_RE.test(content);
 
     for (const m of content.matchAll(routeRe)) {
       const varName = m[1]!;
@@ -61,13 +120,24 @@ function extractGoFramework(
 
       const prefix = resolved[varName] ?? "";
       const fullPath = normalizePath(prefix + routePath);
-      const handlerMatch = handlerArgs.match(/(\w+)\s*[,)]/);
+      // Handler is the LAST identifier in the args (the route call may include
+      // preceding middleware, e.g. `r.GET(path, authMW, handler)`).
+      const idMatches = [...handlerArgs.matchAll(/(\w+)/g)];
+      const handlerName =
+        idMatches.length > 0
+          ? idMatches[idMatches.length - 1]![1]!
+          : "<anonymous>";
+
+      const inlineUpgrade =
+        fileImportsGorilla && UPGRADE_CALL_RE.test(handlerArgs);
+      const isWebsocket = wsHandlers.has(handlerName) || inlineUpgrade;
 
       endpoints.push(
         endpoint({
-          method: httpMethod,
+          method: isWebsocket ? "WS" : httpMethod,
+          kind: isWebsocket ? "websocket" : "api",
           path: fullPath,
-          handler: handlerMatch ? handlerMatch[1]! : "<anonymous>",
+          handler: handlerName,
           file: rel,
           line,
           framework,
@@ -137,6 +207,9 @@ export const netHttp: Extractor = {
     const handleRe =
       /(?:http\.HandleFunc|mux\.HandleFunc|http\.Handle|mux\.Handle)\s*\(\s*['"]([^'"]+)['"]\s*,\s*(\w+)/g;
 
+    // gorilla/websocket import + .Upgrade() call in handler body = websocket route.
+    const wsHandlers = findWebsocketHandlers(ctx, goFiles);
+
     for (const f of goFiles) {
       const content = ctx.readFile(f);
       if (!content) continue;
@@ -145,11 +218,14 @@ export const netHttp: Extractor = {
       const lines = buildLineIndex(content);
       for (const m of content.matchAll(handleRe)) {
         const fullPath = normalizePath(m[1]!);
+        const handlerName = m[2]!;
+        const isWebsocket = wsHandlers.has(handlerName);
         endpoints.push(
           endpoint({
-            method: "ANY",
+            method: isWebsocket ? "WS" : "ANY",
+            kind: isWebsocket ? "websocket" : "api",
             path: fullPath,
-            handler: m[2]!,
+            handler: handlerName,
             file: rel,
             line: lines.lineAt(m.index),
             framework: "net_http",
