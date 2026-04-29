@@ -15,7 +15,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE_DIR = path.join(__dirname, "__fixtures__/fastapi");
 
 describe("fastapi extractor", () => {
-  it("emits correct kinds for api and websocket routes", async () => {
+  it("emits correct kinds for api, page, and websocket routes", async () => {
     const result = map(FIXTURE_DIR, { frameworkOverride: "fastapi" });
     const endpoints = result.endpoints.all;
 
@@ -24,6 +24,22 @@ describe("fastapi extractor", () => {
         method: "GET",
         path: "/health",
         kind: "api",
+      }),
+    );
+
+    expect(endpoints).toContainEqual(
+      expect.objectContaining({
+        method: "GET",
+        path: "/about",
+        kind: "page",
+      }),
+    );
+
+    expect(endpoints).toContainEqual(
+      expect.objectContaining({
+        method: "GET",
+        path: "/dashboard",
+        kind: "page",
       }),
     );
 
