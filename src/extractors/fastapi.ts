@@ -41,8 +41,9 @@ export const fastapi: Extractor = {
     }
 
     // Pass 2: extract routes
+    // Group 4 captures the remaining decorator args (e.g. `response_class=HTMLResponse`).
     const routeRe =
-      /@(\w+)\.(get|post|put|delete|patch|head|options|websocket)\s*\(\s*['"]([^'"]+)['"]\s*(?:,.*?)?\)(.*?)(?:async\s+)?def\s+(\w+)\s*\(([^)]*)\)/gs;
+      /@(\w+)\.(get|post|put|delete|patch|head|options|websocket)\s*\(\s*['"]([^'"]+)['"]\s*((?:,.*?)?)\)(.*?)(?:async\s+)?def\s+(\w+)\s*\(([^)]*)\)/gs;
 
     for (const f of pyFiles) {
       const content = ctx.readFile(f);
@@ -54,13 +55,35 @@ export const fastapi: Extractor = {
         const varName = m[1]!;
         let httpMethod = m[2]!.toUpperCase();
         const routePath = m[3]!;
-        const between = m[4]!;
-        const funcName = m[5]!;
-        const funcParams = m[6]!;
+        const decoratorArgs = m[4]!;
+        const between = m[5]!;
+        const funcName = m[6]!;
+        const funcParams = m[7]!;
         const line = lines.lineAt(m.index);
 
         const isWebSocket = httpMethod === "WEBSOCKET";
         if (isWebSocket) httpMethod = "WS";
+
+        // Page detection: response_class=HTMLResponse decorator arg, or
+        // HTMLResponse()/TemplateResponse() in body = page.
+        // Bound the body window to the next top-level decorator/def so we don't
+        // bleed into adjacent routes' bodies.
+        const bodyStart = m.index + m[0].length;
+        const after = content.slice(bodyStart, bodyStart + 4000);
+        const nextRouteRe = /\n(?=@\w+\.|def\s|async\s+def\s)/;
+        const nextMatch = after.match(nextRouteRe);
+        const body = nextMatch ? after.slice(0, nextMatch.index) : after;
+        const isPage =
+          !isWebSocket &&
+          (/response_class\s*=\s*\w*HTMLResponse\b/.test(decoratorArgs) ||
+            /\bHTMLResponse\s*\(/.test(body) ||
+            /\.TemplateResponse\s*\(/.test(body));
+
+        const kind: EndpointInfo["kind"] = isWebSocket
+          ? "websocket"
+          : isPage
+            ? "page"
+            : "api";
 
         const prefix = routerPrefixes[varName] ?? "";
         const fullPath = normalizePath(prefix + routePath);
@@ -84,7 +107,7 @@ export const fastapi: Extractor = {
         endpoints.push(
           endpoint({
             method: httpMethod,
-            kind: isWebSocket ? "websocket" : "api",
+            kind,
             path: fullPath,
             handler: funcName,
             file: rel,
