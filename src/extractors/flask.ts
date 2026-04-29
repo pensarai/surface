@@ -44,6 +44,10 @@ export const flask: Extractor = {
     const routeRe =
       /@(\w+)\.(?:route|get|post|put|delete|patch)\s*\(\s*['"]([^'"]+)['"](?:\s*,\s*methods\s*=\s*\[([^\]]*)\])?\s*\)(.*?)(?:async\s+)?def\s+(\w+)\s*\(/gs;
 
+    // Detect handler body boundary: next top-level def/class or decorator at column 0.
+    // Used to scope render_template detection to the current handler only.
+    const bodyEndRe = /^(?:@\w|(?:async\s+)?def\s|class\s)/m;
+
     for (const f of pyFiles) {
       const content = ctx.readFile(f);
       if (!content) continue;
@@ -74,10 +78,22 @@ export const flask: Extractor = {
         const auth = findAuthDecorators(between);
         const params = extractPathParams(fullPath);
 
+        // Slice handler body from end of `def name(` match to next top-level
+        // def/class/decorator. Body containing render_template(...) /
+        // render_template_string(...) = HTML page; otherwise = JSON api.
+        const bodyStart = m.index + m[0].length;
+        const rest = content.slice(bodyStart);
+        const endMatch = bodyEndRe.exec(rest);
+        const body = endMatch ? rest.slice(0, endMatch.index) : rest;
+        const kind = /\brender_template(?:_string)?\s*\(/.test(body)
+          ? "page"
+          : "api";
+
         for (const method of methods) {
           endpoints.push(
             endpoint({
               method,
+              kind,
               path: fullPath,
               handler: funcName,
               file: rel,
