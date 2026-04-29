@@ -45,6 +45,67 @@ function findClasses(content: string): ClassRange[] {
   return classes;
 }
 
+// Returns the contiguous decorator stack around `offset` (the position of an
+// `@Get/@Post/...` match), walking outward line-by-line. Stops at lines that
+// end the previous method or statement (}, ;) or otherwise look like code,
+// so a `@Render` on a sibling method cannot bleed into the result.
+function methodDecoratorBlock(content: string, offset: number): string {
+  const lineStart = (pos: number) => {
+    let p = pos;
+    while (p > 0 && content[p - 1] !== "\n") p--;
+    return p;
+  };
+  const isStackLine = (line: string) =>
+    line === "" ||
+    line.startsWith("@") ||
+    line.startsWith("//") ||
+    line.startsWith("/*") ||
+    line.startsWith("*") ||
+    line.endsWith(",") ||
+    line.endsWith("(") ||
+    line.endsWith(")");
+  const endsPrevStatement = (line: string) =>
+    line.endsWith("}") || line.endsWith(";");
+
+  // Walk backwards from the @Get line.
+  let start = lineStart(offset);
+  while (start > 0) {
+    const prev = lineStart(start - 1);
+    const line = content.slice(prev, start - 1).trim();
+    if (endsPrevStatement(line)) break;
+    if (!isStackLine(line)) break;
+    start = prev;
+  }
+
+  // Walk forwards past any decorators between @Get and the method signature.
+  // The method signature is the first line that doesn't start with `@` and
+  // isn't a continuation of decorator args.
+  let end = offset;
+  while (end < content.length && content[end] !== "\n") end++;
+  while (end < content.length) {
+    const nextStart = end + 1;
+    let nextEnd = nextStart;
+    while (nextEnd < content.length && content[nextEnd] !== "\n") nextEnd++;
+    const line = content.slice(nextStart, nextEnd).trim();
+    if (line === "") {
+      end = nextEnd;
+      continue;
+    }
+    if (line.startsWith("@") || line.startsWith("//") || line.startsWith("*")) {
+      end = nextEnd;
+      continue;
+    }
+    if (line.endsWith(",") || line.endsWith(")")) {
+      // Continuation of a multi-line decorator argument list.
+      end = nextEnd;
+      continue;
+    }
+    break;
+  }
+
+  return content.slice(start, end);
+}
+
 export const nestjs: Extractor = {
   id: "nestjs",
   detect: { depKeywords: ["@nestjs/core"], markers: [], scope: "root" },
@@ -186,20 +247,13 @@ export const nestjs: Extractor = {
         }
 
         // @Render decorator on the method = server-side rendered page →
-        // kind: "page". The decorator may appear:
-        //   - before @Get in the preceding decorator stack, or
-        //   - between @Get and the handler (the lazy regex may have stopped
-        //     short of it, so search a forward window from the match start).
-        const decoratorsBefore = cls
-          ? content.slice(cls.start, offset)
-          : content.slice(0, offset);
-        const recentDecorators = decoratorsBefore.slice(
-          Math.max(0, decoratorsBefore.length - 400),
-        );
-        const forwardWindow = content.slice(offset, offset + 400);
-        const hasRender =
-          /@Render\s*\(/.test(forwardWindow) ||
-          /@Render\s*\(/.test(recentDecorators);
+        // kind: "page". The decorator may appear before @Get in the preceding
+        // decorator stack, or between @Get and the handler. Walk line-by-line
+        // out from the @Get match to capture exactly the contiguous decorator
+        // stack of THIS method — stopping at any line that ends a previous
+        // method or statement (}, ;) so we don't bleed into adjacent methods.
+        const decoratorBlock = methodDecoratorBlock(content, offset);
+        const hasRender = /@Render\s*\(/.test(decoratorBlock);
         const kind: EndpointKind = hasRender ? "page" : "api";
 
         endpoints.push(
