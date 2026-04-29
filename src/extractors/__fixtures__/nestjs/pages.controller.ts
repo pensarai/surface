@@ -1,4 +1,3 @@
-// @ts-nocheck — fixture: extractor scans source text, no need to typecheck.
 import { Controller, Get, Render } from "@nestjs/common";
 
 @Controller()

@@ -21,6 +21,11 @@ export default tseslint.config(
   },
   prettierConfig,
   {
-    ignores: ["node_modules/**", "dist/**", "build/**"],
+    ignores: [
+      "node_modules/**",
+      "dist/**",
+      "build/**",
+      "src/extractors/__fixtures__/**",
+    ],
   },
 );

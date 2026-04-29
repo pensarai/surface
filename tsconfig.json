@@ -26,5 +26,11 @@
     "noUnusedParameters": false,
     "noPropertyAccessFromIndexSignature": false
   },
-  "exclude": ["scripts/fixtures"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "build",
+    "scripts/fixtures",
+    "src/extractors/__fixtures__"
+  ]
 }
