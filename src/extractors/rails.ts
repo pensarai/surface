@@ -27,12 +27,10 @@ interface ControllerResolver {
   resolve(controllerRef: string): RailsKind;
 }
 
-function createControllerResolver(
-  ctx: {
-    repoPath: string;
-    readFile(path: string): string | null;
-  },
-): ControllerResolver {
+function createControllerResolver(ctx: {
+  repoPath: string;
+  readFile(path: string): string | null;
+}): ControllerResolver {
   // Cache by controller class name (e.g. "Api::UsersController") to avoid
   // re-reading and re-parsing the same file when multiple routes share a
   // controller.
@@ -180,12 +178,17 @@ export const rails: Extractor = {
       const endMatches = /^\s*end\b/.test(code);
       if (endMatches) {
         depth = Math.max(0, depth - 1);
-        while (nsStack.length > 0 && nsStack[nsStack.length - 1]!.depth >= depth) {
+        while (
+          nsStack.length > 0 &&
+          nsStack[nsStack.length - 1]!.depth >= depth
+        ) {
           nsStack.pop();
         }
       }
 
-      const prefix = nsStack.length ? "/" + nsStack.map((n) => n.name).join("/") : "";
+      const prefix = nsStack.length
+        ? "/" + nsStack.map((n) => n.name).join("/")
+        : "";
       // Record prefix on the NEXT line (1-indexed), since routes declared on
       // the line that opens a namespace are themselves outside that namespace.
       prefixAtLine[i + 1] = prefix;

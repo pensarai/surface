@@ -53,8 +53,7 @@ export const nestjs: Extractor = {
     const tsFiles = ctx.iterFiles([".ts"]);
 
     const controllerRe = /@Controller\s*\(\s*['"]([^'"]*)['"]\s*\)/;
-    const wsGatewayRe =
-      /@WebSocketGateway\s*\(([^)]*)\)|@WebSocketGateway\b/;
+    const wsGatewayRe = /@WebSocketGateway\s*\(([^)]*)\)|@WebSocketGateway\b/;
     // Captures: 1=method, 2=path, 3=between (text from after ) to handler), 4=handler
     // The lazy `.*?` may stop short if a Nest decorator like @Render / @Header
     // follows the http verb — those would otherwise be captured as the handler
