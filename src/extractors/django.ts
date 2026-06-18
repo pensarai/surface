@@ -21,10 +21,14 @@ export const django: Extractor = {
       return name === "urls.py" || name === "routes.py";
     });
 
-    // Build prefix map from include() calls
+    // Build prefix map from include() calls.
+    // `[rRbBuUfF]*` allows Python string-literal prefixes (raw `r"..."`,
+    // f-strings, bytes, unicode) before the quote — these are common in
+    // urls.py and would otherwise be skipped. `(?:path|re_path)` covers both
+    // Django route helpers.
     const includePrefixes: Record<string, string> = {};
     const pathIncludeRe =
-      /path\s*\(\s*['"]([^'"]*)['"]\s*,\s*include\s*\(\s*['"]([^'"]+)['"]/g;
+      /(?:path|re_path)\s*\(\s*[rRbBuUfF]*['"]([^'"]*)['"]\s*,\s*include\s*\(\s*[rRbBuUfF]*['"]([^'"]+)['"]/g;
 
     for (const f of urlFiles) {
       const content = ctx.readFile(f);
@@ -35,7 +39,7 @@ export const django: Extractor = {
     }
 
     const directPathRe =
-      /path\s*\(\s*['"]([^'"]*)['"]\s*,\s*(?!include)(\w[\w.]*)/g;
+      /(?:path|re_path)\s*\(\s*[rRbBuUfF]*['"]([^'"]*)['"]\s*,\s*(?!include)(\w[\w.]*)/g;
     const apiViewRe =
       /@api_view\s*\(\s*\[([^\]]*)\]\s*\)(.*?)def\s+(\w+)\s*\(/gs;
 
