@@ -14,7 +14,7 @@ describe("django url extraction", () => {
   const endpoints = extract();
   const byPath = (p: string) => endpoints.find((e) => e.path === p);
 
-  test("extracts routes declared with string-prefixed literals (r\"...\")", () => {
+  test('extracts routes declared with string-prefixed literals (r"...")', () => {
     // blog.urls is mounted under "blog/" via include(), so routes are prefixed.
     expect(byPath("/blog/posts")).toBeDefined();
     expect(byPath("/blog/posts/new")).toBeDefined();
