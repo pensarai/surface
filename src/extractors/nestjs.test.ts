@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { resolve } from "path";
 import { nestjs } from "./nestjs.ts";
 import { createScanContext } from "../scan-context.ts";
+import { map } from "../mapper.ts";
 
 function extract(fixture: string) {
   const dir = resolve(import.meta.dir, "../../scripts/fixtures", fixture);
@@ -35,11 +36,24 @@ describe("nestjs code-first gRPC", () => {
   });
 });
 
-describe("nestjs gRPC defers to proto when one is present", () => {
-  test("emits no decorator-derived gRPC endpoints when a .proto exists", () => {
-    const grpc = extract("nestjs-grpc-proto").filter(
-      (e) => e.transport === "grpc",
+describe("proto wins over bare decorator paths at the mapper", () => {
+  const dir = resolve(
+    import.meta.dir,
+    "../../scripts/fixtures/nestjs-grpc-proto",
+  );
+  const grpc = map(dir).endpoints.all.filter((e) => e.grpc);
+
+  test("keeps the package-qualified proto endpoints", () => {
+    expect(grpc.length).toBe(3);
+    expect(grpc.every((e) => e.grpc!.serviceFqn === "hero.HeroesService")).toBe(
+      true,
     );
-    expect(grpc.length).toBe(0);
+  });
+
+  test("drops the bare /HeroesService/* decorator duplicates", () => {
+    expect(grpc.some((e) => e.path === "/hero.HeroesService/FindOne")).toBe(
+      true,
+    );
+    expect(grpc.some((e) => e.path.startsWith("/HeroesService/"))).toBe(false);
   });
 });

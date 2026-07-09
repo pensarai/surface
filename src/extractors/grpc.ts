@@ -1,4 +1,4 @@
-import { join } from "path";
+import { basename } from "path";
 import type {
   EndpointInfo,
   Extractor,
@@ -17,22 +17,19 @@ const CONNECT_HINTS = [
   "connectrpc",
 ];
 
-const DEP_FILES = [
-  "package.json",
-  "go.mod",
-  "Cargo.toml",
-  "pom.xml",
-  "build.gradle",
-  "build.gradle.kts",
+// Files that carry a Connect/Buf toolchain signal. Scanned tree-wide (not just
+// at the repo root) so nested-workspace monorepos are detected.
+const CONNECT_DEP_FILES = new Set([
   "buf.gen.yaml",
   "buf.yaml",
-  "requirements.txt",
-  "pyproject.toml",
-];
+  "package.json",
+  "go.mod",
+]);
 
 function usesConnect(ctx: ScanContext): boolean {
-  for (const f of DEP_FILES) {
-    const c = ctx.readFile(join(ctx.repoPath, f));
+  for (const f of ctx.iterFiles([".yaml", ".json", ".mod"])) {
+    if (!CONNECT_DEP_FILES.has(basename(f).toLowerCase())) continue;
+    const c = ctx.readFile(f);
     if (c && CONNECT_HINTS.some((h) => c.toLowerCase().includes(h)))
       return true;
   }

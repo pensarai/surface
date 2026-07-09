@@ -2,6 +2,10 @@ syntax = "proto3";
 package hero;
 service HeroesService {
   rpc FindOne(HeroById) returns (Hero);
+  rpc FindAll(Empty) returns (Heroes);
+  rpc StreamHeroes(stream HeroById) returns (stream Hero);
 }
 message HeroById { int32 id = 1; }
 message Hero { int32 id = 1; string name = 2; }
+message Empty {}
+message Heroes { repeated Hero heroes = 1; }

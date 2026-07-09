@@ -388,9 +388,28 @@ export function mapRaw(
 export function map(repoPath: string, options: MapOptions = {}): MapResult {
   const raw = mapRaw(repoPath, options);
 
+  // A gRPC method found in a `.proto` carries a package-qualified serviceFqn
+  // (`pkg.Service`); the same method found via a framework decorator (e.g.
+  // NestJS `@GrpcMethod`) usually lacks the package. When both exist, prefer
+  // the qualified one and drop the bare duplicate.
+  const shortName = (fqn: string) => fqn.slice(fqn.lastIndexOf(".") + 1);
+  const qualifiedGrpc = new Set<string>();
+  for (const ep of raw.endpoints) {
+    if (ep.grpc && ep.grpc.serviceFqn.includes(".")) {
+      qualifiedGrpc.add(`${shortName(ep.grpc.serviceFqn)}::${ep.grpc.method}`);
+    }
+  }
+
   const seen = new Set<string>();
   const unique: EndpointInfo[] = [];
   for (const ep of raw.endpoints) {
+    if (
+      ep.grpc &&
+      !ep.grpc.serviceFqn.includes(".") &&
+      qualifiedGrpc.has(`${ep.grpc.serviceFqn}::${ep.grpc.method}`)
+    ) {
+      continue;
+    }
     const key = `${ep.transport ?? "http"}::${ep.method}::${ep.path}`;
     if (!seen.has(key)) {
       seen.add(key);
