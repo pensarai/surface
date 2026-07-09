@@ -25,6 +25,17 @@ def about_page(request):
 def status_page(request): return render(request, "status.html")
 
 
+# Sync JSON view immediately followed by an async template view: the sync view
+# must NOT absorb the async view's render() into its body (stays api), and the
+# async view must be indexed and classified page.
+def json_only(request):
+    return JsonResponse({"ok": True})
+
+
+async def async_page(request):
+    return render(request, "async.html", {"title": "Async"})
+
+
 @api_view(["GET"])
 def health(request):
     return Response({"status": "ok"})

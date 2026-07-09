@@ -135,6 +135,16 @@ describe("django extractor", () => {
     );
   });
 
+  it("indexes async views and does not bleed render() across functions", () => {
+    // async_page (async def, renders) → page; json_only (sync, no render, sits
+    // right before the async view) must stay api — the async body must not be
+    // absorbed into the preceding sync view.
+    const result = map(FIXTURE_DIR, { frameworkOverride: "django" });
+    const endpoints = result.endpoints.all;
+    expect(endpoints.find((e) => e.path === "/async")?.kind).toBe("page");
+    expect(endpoints.find((e) => e.path === "/json")?.kind).toBe("api");
+  });
+
   it("resolves same-named views per app (no registry collision)", () => {
     // Two apps both define `DashboardView`: myapp's is a page (template CBV),
     // otherapp's is an api (DRF APIView). Each route must get its own app's kind.

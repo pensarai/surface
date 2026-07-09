@@ -7,4 +7,6 @@ urlpatterns = [
     path("about/", views.about_page, name="about"),
     path("dashboard/", views.DashboardView.as_view(), name="dashboard"),
     path("status/", views.status_page, name="status"),
+    path("json/", views.json_only, name="json"),
+    path("async/", views.async_page, name="async"),
 ]

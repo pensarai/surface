@@ -56,12 +56,14 @@ export const django: Extractor = {
 
     const classRe = /^class\s+(\w+)\s*\(([^)]*)\)\s*:/gm;
     // Capture the function body until the next top-level def/class or EOF.
-    // `(?:->[^:\n]+)?:[ \t]*\n?` accepts an optional `-> ReturnType` annotation
-    // and both multi-line bodies (colon then newline) and single-line bodies
-    // (`def view(request): return render(...)`), which would otherwise be
-    // skipped and misclassified as api.
+    // - `(?:async\s+)?def` also indexes `async def` views (async template views
+    //   would otherwise be missed, and a following async fn could be absorbed
+    //   into the previous sync view's body).
+    // - `(?:->[^:\n]+)?:[ \t]*\n?` accepts an optional `-> ReturnType` annotation
+    //   and both multi-line and single-line bodies
+    //   (`def view(request): return render(...)`).
     const funcRe =
-      /^def\s+(\w+)\s*\([^)]*\)\s*(?:->[^:\n]+)?:[ \t]*\n?([\s\S]*?)(?=^(?:def |class )|$(?![\s\S]))/gm;
+      /^(?:async\s+)?def\s+(\w+)\s*\([^)]*\)\s*(?:->[^:\n]+)?:[ \t]*\n?([\s\S]*?)(?=^(?:(?:async\s+)?def |class )|$(?![\s\S]))/gm;
 
     for (const f of pyFiles) {
       const content = ctx.readFile(f);
