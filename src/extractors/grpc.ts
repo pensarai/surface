@@ -1,4 +1,4 @@
-import { basename } from "path";
+import { dirname, join } from "path";
 import type {
   EndpointInfo,
   Extractor,
@@ -17,23 +17,39 @@ const CONNECT_HINTS = [
   "connectrpc",
 ];
 
-// Files that carry a Connect/Buf toolchain signal. Scanned tree-wide (not just
-// at the repo root) so nested-workspace monorepos are detected.
-const CONNECT_DEP_FILES = new Set([
+const CONNECT_DEP_FILES = [
   "buf.gen.yaml",
   "buf.yaml",
   "package.json",
   "go.mod",
-]);
+];
 
-function usesConnect(ctx: ScanContext): boolean {
-  for (const f of ctx.iterFiles([".yaml", ".json", ".mod"])) {
-    if (!CONNECT_DEP_FILES.has(basename(f).toLowerCase())) continue;
-    const c = ctx.readFile(f);
-    if (c && CONNECT_HINTS.some((h) => c.toLowerCase().includes(h)))
-      return true;
-  }
-  return false;
+// Connect vs. plain gRPC is decided per proto by walking up to the nearest
+// package that declares a Connect/Buf toolchain — so a Connect service in one
+// package doesn't mislabel vanilla gRPC protos elsewhere in a monorepo. Results
+// are memoized per directory (ancestors are shared across sibling protos).
+function makeConnectResolver(ctx: ScanContext): (file: string) => boolean {
+  const memo = new Map<string, boolean>();
+  const root = ctx.repoPath;
+  const dirUsesConnect = (dir: string): boolean => {
+    const cached = memo.get(dir);
+    if (cached !== undefined) return cached;
+    let result = false;
+    for (const name of CONNECT_DEP_FILES) {
+      const c = ctx.readFile(join(dir, name));
+      if (c && CONNECT_HINTS.some((h) => c.toLowerCase().includes(h))) {
+        result = true;
+        break;
+      }
+    }
+    if (!result && dir !== root && dir.startsWith(root)) {
+      const parent = dirname(dir);
+      if (parent !== dir) result = dirUsesConnect(parent);
+    }
+    memo.set(dir, result);
+    return result;
+  };
+  return (file) => dirUsesConnect(dirname(file));
 }
 
 // Blank out comments while preserving byte offsets and newlines. String-aware:
@@ -100,12 +116,13 @@ export const grpc: Extractor = {
   detect: (_repoPath, ctx) => ctx.iterFiles([".proto"]).length > 0,
   extract(ctx) {
     const endpoints: EndpointInfo[] = [];
-    const framework: FrameworkId = usesConnect(ctx) ? "connect" : "grpc";
-    const transport = framework === "connect" ? "connect" : "grpc";
+    const connectForFile = makeConnectResolver(ctx);
 
     for (const file of ctx.iterFiles([".proto"])) {
       const raw = ctx.readFile(file);
       if (!raw) continue;
+      const framework: FrameworkId = connectForFile(file) ? "connect" : "grpc";
+      const transport = framework === "connect" ? "connect" : "grpc";
       const src = stripComments(raw);
       const rel = ctx.rel(file);
       const lines = buildLineIndex(raw);

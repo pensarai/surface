@@ -375,7 +375,7 @@ export function mapRaw(
   return {
     repoPath: resolved,
     frameworks,
-    endpoints,
+    endpoints: dropBareGrpcAliases(endpoints),
     services: refinedServices,
     filesScanned: ctx.filesScanned,
   };
@@ -385,31 +385,34 @@ export function mapRaw(
 // Main mapper — dedup, filter, sort over raw results
 // ---------------------------------------------------------------------------
 
-export function map(repoPath: string, options: MapOptions = {}): MapResult {
-  const raw = mapRaw(repoPath, options);
-
-  // A gRPC method found in a `.proto` carries a package-qualified serviceFqn
-  // (`pkg.Service`); the same method found via a framework decorator (e.g.
-  // NestJS `@GrpcMethod`) usually lacks the package. When both exist, prefer
-  // the qualified one and drop the bare duplicate.
+// A gRPC method found in a `.proto` carries a package-qualified serviceFqn
+// (`pkg.Service`); the same method found via a framework decorator (e.g. NestJS
+// `@GrpcMethod`) usually lacks the package. When both exist, drop the bare
+// duplicate. Applied in `mapRaw` so `map()` and `impact()` stay consistent.
+function dropBareGrpcAliases(endpoints: EndpointInfo[]): EndpointInfo[] {
   const shortName = (fqn: string) => fqn.slice(fqn.lastIndexOf(".") + 1);
-  const qualifiedGrpc = new Set<string>();
-  for (const ep of raw.endpoints) {
+  const qualified = new Set<string>();
+  for (const ep of endpoints) {
     if (ep.grpc && ep.grpc.serviceFqn.includes(".")) {
-      qualifiedGrpc.add(`${shortName(ep.grpc.serviceFqn)}::${ep.grpc.method}`);
+      qualified.add(`${shortName(ep.grpc.serviceFqn)}::${ep.grpc.method}`);
     }
   }
+  return endpoints.filter(
+    (ep) =>
+      !(
+        ep.grpc &&
+        !ep.grpc.serviceFqn.includes(".") &&
+        qualified.has(`${ep.grpc.serviceFqn}::${ep.grpc.method}`)
+      ),
+  );
+}
+
+export function map(repoPath: string, options: MapOptions = {}): MapResult {
+  const raw = mapRaw(repoPath, options);
 
   const seen = new Set<string>();
   const unique: EndpointInfo[] = [];
   for (const ep of raw.endpoints) {
-    if (
-      ep.grpc &&
-      !ep.grpc.serviceFqn.includes(".") &&
-      qualifiedGrpc.has(`${ep.grpc.serviceFqn}::${ep.grpc.method}`)
-    ) {
-      continue;
-    }
     const key = `${ep.transport ?? "http"}::${ep.method}::${ep.path}`;
     if (!seen.has(key)) {
       seen.add(key);

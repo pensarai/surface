@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { resolve } from "path";
 import { nestjs } from "./nestjs.ts";
 import { createScanContext } from "../scan-context.ts";
-import { map } from "../mapper.ts";
+import { map, mapRaw } from "../mapper.ts";
 
 function extract(fixture: string) {
   const dir = resolve(import.meta.dir, "../../scripts/fixtures", fixture);
@@ -55,5 +55,12 @@ describe("proto wins over bare decorator paths at the mapper", () => {
       true,
     );
     expect(grpc.some((e) => e.path.startsWith("/HeroesService/"))).toBe(false);
+  });
+
+  test("dedup lives in mapRaw so impact() sees it too", () => {
+    const rawGrpc = mapRaw(dir).endpoints.filter((e) => e.grpc);
+    expect(rawGrpc.some((e) => e.path.startsWith("/HeroesService/"))).toBe(
+      false,
+    );
   });
 });

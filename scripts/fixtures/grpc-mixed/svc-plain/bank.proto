@@ -1,0 +1,4 @@
+syntax="proto3";
+package bank.v1;
+service BankService { rpc GetBalance(Req) returns (Resp); }
+message Req{} message Resp{}

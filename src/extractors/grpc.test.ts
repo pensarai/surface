@@ -76,4 +76,11 @@ describe("grpc connect detection", () => {
     expect(grpcEps.length).toBe(1);
     expect(grpcEps[0]!.transport).toBe("connect");
   });
+
+  test("scopes connect vs plain gRPC per package in a monorepo", () => {
+    const mixed = extract("grpc-mixed");
+    const byPath = (p: string) => mixed.find((e) => e.path === p);
+    expect(byPath("/eliza.v1.ElizaService/Say")!.transport).toBe("connect");
+    expect(byPath("/bank.v1.BankService/GetBalance")!.transport).toBe("grpc");
+  });
 });
