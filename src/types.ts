@@ -21,6 +21,20 @@ export type HttpMethod =
 
 export type EndpointKind = "api" | "page" | "action" | "websocket";
 
+export type EndpointTransport = "http" | "grpc" | "grpc_web" | "connect";
+
+export type GrpcStreaming =
+  | "unary"
+  | "server_stream"
+  | "client_stream"
+  | "bidi";
+
+export interface GrpcMeta {
+  serviceFqn: string;
+  method: string;
+  streamingType: GrpcStreaming;
+}
+
 export type ServiceType =
   | "nextjs"
   | "lambda"
@@ -48,6 +62,10 @@ export interface EndpointInfo {
   params: ParamInfo[];
   auth: string[];
   internal: boolean;
+  /** Wire transport. Absent means plain HTTP. */
+  transport?: EndpointTransport;
+  /** Present when transport is a gRPC variant. */
+  grpc?: GrpcMeta;
   service?: string;
   /** Repo-relative path of the handler's source file, when distinct from `file`
    *  (e.g. SST routes declared in infra/ but implemented in packages/functions/). */
@@ -91,7 +109,9 @@ export type FrameworkId =
   | "laravel"
   | "sst"
   | "server_actions"
-  | "openapi";
+  | "openapi"
+  | "grpc"
+  | "connect";
 
 export interface FrameworkDetect {
   /** Substring matches checked against dependency file content */

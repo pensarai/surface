@@ -1,0 +1,30 @@
+// Orders API — license header
+/* a block comment
+   spanning multiple lines with a stray */
+syntax = "proto3";
+package shop.v1;
+
+import "google/protobuf/empty.proto";
+
+service OrderService {
+  // Create an order
+  rpc CreateOrder(CreateOrderRequest) returns (Order) {
+    option (google.api.http) = {
+      post: "/v1/{parent=shops/*}/orders"
+      body: "*"
+    };
+  }
+  rpc StreamOrders(StreamOrdersRequest)
+      returns (stream Order);
+  rpc UploadOrders(stream Order) returns (UploadSummary);
+  rpc Chat(stream ChatMsg) returns (stream ChatMsg);
+  rpc DeleteOrder(DeleteOrderRequest) returns (google.protobuf.Empty);
+}
+
+service AdminService {
+  rpc Shutdown(ShutdownRequest) returns (google.protobuf.Empty);
+}
+
+message CreateOrderRequest { string parent = 1; }
+message Order { string id = 1; }
+// rpc CommentedOut(Foo) returns (Bar);

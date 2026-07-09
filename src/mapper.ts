@@ -385,16 +385,27 @@ export function mapRaw(
 // Main mapper — dedup, filter, sort over raw results
 // ---------------------------------------------------------------------------
 
+// A `.proto` and a framework decorator (e.g. NestJS `@GrpcMethod`) can describe
+// the same gRPC method. We only collapse them when they resolve to the SAME
+// wire path (identical `transport::method::path`) — matching on the unqualified
+// service name would wrongly merge unrelated services that share a short name.
+// On a genuine collision the proto definition wins (it's the canonical source).
+const isProtoGrpc = (ep: EndpointInfo) =>
+  ep.framework === "grpc" || ep.framework === "connect";
+
 export function map(repoPath: string, options: MapOptions = {}): MapResult {
   const raw = mapRaw(repoPath, options);
 
-  const seen = new Set<string>();
+  const indexByKey = new Map<string, number>();
   const unique: EndpointInfo[] = [];
   for (const ep of raw.endpoints) {
-    const key = `${ep.method}::${ep.path}`;
-    if (!seen.has(key)) {
-      seen.add(key);
+    const key = `${ep.transport ?? "http"}::${ep.method}::${ep.path}`;
+    const idx = indexByKey.get(key);
+    if (idx === undefined) {
+      indexByKey.set(key, unique.length);
       unique.push(ep);
+    } else if (isProtoGrpc(ep) && !isProtoGrpc(unique[idx]!)) {
+      unique[idx] = ep;
     }
   }
 

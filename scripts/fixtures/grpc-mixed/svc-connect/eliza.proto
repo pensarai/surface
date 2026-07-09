@@ -1,0 +1,4 @@
+syntax="proto3";
+package eliza.v1;
+service ElizaService { rpc Say(Req) returns (Resp); }
+message Req{} message Resp{}

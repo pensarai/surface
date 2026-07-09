@@ -1,0 +1,1 @@
+{ "name": "nestjs-grpc-fixture", "dependencies": { "@nestjs/core": "^10.0.0", "@nestjs/microservices": "^10.0.0" } }
