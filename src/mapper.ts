@@ -375,7 +375,7 @@ export function mapRaw(
   return {
     repoPath: resolved,
     frameworks,
-    endpoints: dropBareGrpcAliases(endpoints),
+    endpoints,
     services: refinedServices,
     filesScanned: ctx.filesScanned,
   };
@@ -385,38 +385,27 @@ export function mapRaw(
 // Main mapper — dedup, filter, sort over raw results
 // ---------------------------------------------------------------------------
 
-// A gRPC method found in a `.proto` carries a package-qualified serviceFqn
-// (`pkg.Service`); the same method found via a framework decorator (e.g. NestJS
-// `@GrpcMethod`) usually lacks the package. When both exist, drop the bare
-// duplicate. Applied in `mapRaw` so `map()` and `impact()` stay consistent.
-function dropBareGrpcAliases(endpoints: EndpointInfo[]): EndpointInfo[] {
-  const shortName = (fqn: string) => fqn.slice(fqn.lastIndexOf(".") + 1);
-  const qualified = new Set<string>();
-  for (const ep of endpoints) {
-    if (ep.grpc && ep.grpc.serviceFqn.includes(".")) {
-      qualified.add(`${shortName(ep.grpc.serviceFqn)}::${ep.grpc.method}`);
-    }
-  }
-  return endpoints.filter(
-    (ep) =>
-      !(
-        ep.grpc &&
-        !ep.grpc.serviceFqn.includes(".") &&
-        qualified.has(`${ep.grpc.serviceFqn}::${ep.grpc.method}`)
-      ),
-  );
-}
+// A `.proto` and a framework decorator (e.g. NestJS `@GrpcMethod`) can describe
+// the same gRPC method. We only collapse them when they resolve to the SAME
+// wire path (identical `transport::method::path`) — matching on the unqualified
+// service name would wrongly merge unrelated services that share a short name.
+// On a genuine collision the proto definition wins (it's the canonical source).
+const isProtoGrpc = (ep: EndpointInfo) =>
+  ep.framework === "grpc" || ep.framework === "connect";
 
 export function map(repoPath: string, options: MapOptions = {}): MapResult {
   const raw = mapRaw(repoPath, options);
 
-  const seen = new Set<string>();
+  const indexByKey = new Map<string, number>();
   const unique: EndpointInfo[] = [];
   for (const ep of raw.endpoints) {
     const key = `${ep.transport ?? "http"}::${ep.method}::${ep.path}`;
-    if (!seen.has(key)) {
-      seen.add(key);
+    const idx = indexByKey.get(key);
+    if (idx === undefined) {
+      indexByKey.set(key, unique.length);
       unique.push(ep);
+    } else if (isProtoGrpc(ep) && !isProtoGrpc(unique[idx]!)) {
+      unique[idx] = ep;
     }
   }
 

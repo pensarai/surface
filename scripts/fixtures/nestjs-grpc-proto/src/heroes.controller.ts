@@ -3,12 +3,18 @@ import { GrpcMethod, GrpcStreamMethod } from '@nestjs/microservices';
 
 @Controller()
 export class HeroesController {
-  @GrpcMethod('HeroesService', 'FindOne')
+  @GrpcMethod('hero.HeroesService', 'FindOne')
   findOne(data: HeroById): Hero { return {} as Hero; }
 
-  @GrpcMethod('HeroesService')
+  @GrpcMethod('hero.HeroesService', 'FindAll')
   findAll(data: Empty): Heroes { return {} as Heroes; }
 
-  @GrpcStreamMethod('HeroesService', 'StreamHeroes')
+  @GrpcStreamMethod('hero.HeroesService', 'StreamHeroes')
   streamHeroes(messages: any) { return messages; }
+}
+
+@Controller()
+export class BillingController {
+  @GrpcMethod()
+  charge(data: any): any { return {}; }
 }

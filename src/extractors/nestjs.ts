@@ -85,11 +85,25 @@ export const nestjs: Extractor = {
       if (!content || !content.includes("@Grpc")) continue;
       const rel = ctx.rel(f);
       const lines = buildLineIndex(content);
-      const className = /class\s+(\w+)/.exec(content)?.[1] ?? "";
+      // Associate each decorator with the class that owns it (nearest `class`
+      // declared before it), so files with multiple controllers resolve the
+      // fallback service name from the right class.
+      const classes = [...content.matchAll(/\bclass\s+(\w+)/g)].map((c) => ({
+        name: c[1]!,
+        index: c.index,
+      }));
+      const classAt = (offset: number) => {
+        let name = "";
+        for (const c of classes) {
+          if (c.index < offset) name = c.name;
+          else break;
+        }
+        return name;
+      };
       for (const m of content.matchAll(grpcRe)) {
         const args = [...m[2]!.matchAll(/['"]([^'"]+)['"]/g)].map((a) => a[1]!);
         const handler = m[3]!;
-        const service = args[0] ?? className.replace(/Controller$/, "");
+        const service = args[0] ?? classAt(m.index).replace(/Controller$/, "");
         const method =
           args[1] ?? handler.charAt(0).toUpperCase() + handler.slice(1);
         endpoints.push(

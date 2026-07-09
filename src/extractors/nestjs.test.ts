@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { resolve } from "path";
 import { nestjs } from "./nestjs.ts";
 import { createScanContext } from "../scan-context.ts";
-import { map, mapRaw } from "../mapper.ts";
+import { map } from "../mapper.ts";
 
 function extract(fixture: string) {
   const dir = resolve(import.meta.dir, "../../scripts/fixtures", fixture);
@@ -36,31 +36,26 @@ describe("nestjs code-first gRPC", () => {
   });
 });
 
-describe("proto wins over bare decorator paths at the mapper", () => {
+describe("proto tiebreak + owning-class service resolution", () => {
   const dir = resolve(
     import.meta.dir,
     "../../scripts/fixtures/nestjs-grpc-proto",
   );
   const grpc = map(dir).endpoints.all.filter((e) => e.grpc);
+  const byPath = (p: string) => grpc.find((e) => e.path === p);
 
-  test("keeps the package-qualified proto endpoints", () => {
-    expect(grpc.length).toBe(3);
-    expect(grpc.every((e) => e.grpc!.serviceFqn === "hero.HeroesService")).toBe(
-      true,
-    );
+  test("on an identical wire path, the proto definition wins over the decorator", () => {
+    const e = byPath("/hero.HeroesService/FindOne");
+    expect(e).toBeDefined();
+    expect(e!.framework).toBe("grpc");
   });
 
-  test("drops the bare /HeroesService/* decorator duplicates", () => {
-    expect(grpc.some((e) => e.path === "/hero.HeroesService/FindOne")).toBe(
-      true,
-    );
-    expect(grpc.some((e) => e.path.startsWith("/HeroesService/"))).toBe(false);
-  });
-
-  test("dedup lives in mapRaw so impact() sees it too", () => {
-    const rawGrpc = mapRaw(dir).endpoints.filter((e) => e.grpc);
-    expect(rawGrpc.some((e) => e.path.startsWith("/HeroesService/"))).toBe(
-      false,
-    );
+  test("a decorator with no matching proto survives", () => {
+    // @GrpcMethod() with no args in BillingController; resolved from its OWN
+    // class (BillingController -> Billing), not the file's first class.
+    const e = byPath("/Billing/Charge");
+    expect(e).toBeDefined();
+    expect(e!.framework).toBe("nestjs");
+    expect(e!.grpc!.serviceFqn).toBe("Billing");
   });
 });
