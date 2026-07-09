@@ -150,6 +150,11 @@ export const grpc: Extractor = {
 
         const serviceFqn = pkg ? `${pkg}.${svc.name}` : svc.name;
         const method = m[1]!;
+        // kind stays "api" (the endpoint() default). A gRPC rpc is an API
+        // method, not a page or a browser websocket: even server/bidi
+        // *streaming* rpcs are modeled through `grpc.streamingType`
+        // (server_stream / client_stream / bidi), NOT via kind: "websocket".
+        // The wire transport (grpc vs connect) lives in `transport`.
         endpoints.push(
           endpoint({
             method: "ANY",

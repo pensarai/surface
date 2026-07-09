@@ -7,7 +7,10 @@ import { createScanContext } from "../scan-context.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE_DIR = path.join(__dirname, "__fixtures__/django");
-const URLS_FIXTURE = path.resolve(__dirname, "../../scripts/fixtures/django-urls");
+const URLS_FIXTURE = path.resolve(
+  __dirname,
+  "../../scripts/fixtures/django-urls",
+);
 
 function extractUrls(fixturePath: string = URLS_FIXTURE) {
   const ctx = createScanContext(fixturePath);

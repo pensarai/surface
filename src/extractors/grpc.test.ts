@@ -1,29 +1,32 @@
-import { describe, expect, test } from "bun:test";
-import { resolve } from "path";
+import { describe, it, expect } from "vitest";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { grpc } from "./grpc.ts";
 import { createScanContext } from "../scan-context.ts";
 import { map } from "../mapper.ts";
 import { getExtractor } from "./index.ts";
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const fixtureDir = (name: string) => path.join(__dirname, "__fixtures__", name);
+
 function extract(fixture: string) {
-  const dir = resolve(import.meta.dir, "../../scripts/fixtures", fixture);
-  return grpc.extract(createScanContext(dir));
+  return grpc.extract(createScanContext(fixtureDir(fixture)));
 }
 
 describe("grpc proto extraction", () => {
   const eps = extract("grpc-proto");
   const byPath = (p: string) => eps.find((e) => e.path === p);
 
-  test("one endpoint per rpc across all services", () => {
+  it("one endpoint per rpc across all services", () => {
     expect(eps.length).toBe(6);
   });
 
-  test("wire path is /package.Service/Method", () => {
+  it("wire path is /package.Service/Method", () => {
     expect(byPath("/shop.v1.OrderService/CreateOrder")).toBeDefined();
     expect(byPath("/shop.v1.AdminService/Shutdown")).toBeDefined();
   });
 
-  test("detects all four streaming types", () => {
+  it("detects all four streaming types", () => {
     expect(
       byPath("/shop.v1.OrderService/CreateOrder")!.grpc!.streamingType,
     ).toBe("unary");
@@ -38,19 +41,20 @@ describe("grpc proto extraction", () => {
     );
   });
 
-  test("tags transport and framework as grpc", () => {
+  it("tags transport and framework as grpc, kind stays api", () => {
     const e = byPath("/shop.v1.OrderService/CreateOrder")!;
     expect(e.transport).toBe("grpc");
     expect(e.framework).toBe("grpc");
+    expect(e.kind).toBe("api");
     expect(e.grpc!.serviceFqn).toBe("shop.v1.OrderService");
     expect(e.grpc!.method).toBe("CreateOrder");
   });
 
-  test("ignores commented-out rpcs", () => {
+  it("ignores commented-out rpcs", () => {
     expect(byPath("/shop.v1.OrderService/CommentedOut")).toBeUndefined();
   });
 
-  test("survives braces and slashes inside option-string paths", () => {
+  it("survives braces and slashes inside option-string paths", () => {
     // DeleteOrder is declared AFTER an `option (google.api.http)` block whose
     // path literal contains `{parent=shops/*}` — the exact trap that a
     // non-string-aware comment/brace scanner chokes on.
@@ -60,17 +64,16 @@ describe("grpc proto extraction", () => {
 
 describe("grpc connect detection", () => {
   const eps = extract("grpc-connect");
-  test("maps to the connect transport when a connect toolchain is present", () => {
+  it("maps to the connect transport when a connect toolchain is present", () => {
     expect(eps.length).toBe(1);
     expect(eps[0]!.transport).toBe("connect");
     expect(eps[0]!.framework).toBe("connect");
     expect(eps[0]!.path).toBe("/connectrpc.eliza.v1.ElizaService/Say");
   });
 
-  test("`--framework connect` resolves the grpc extractor", () => {
+  it("`--framework connect` resolves the grpc extractor", () => {
     expect(getExtractor("connect")).toBe(grpc);
-    const dir = resolve(import.meta.dir, "../../scripts/fixtures/grpc-connect");
-    const grpcEps = map(dir, {
+    const grpcEps = map(fixtureDir("grpc-connect"), {
       frameworkOverride: "connect",
     }).endpoints.all.filter((e) => e.grpc);
     expect(grpcEps.length).toBe(1);
