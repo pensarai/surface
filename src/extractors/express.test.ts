@@ -52,4 +52,22 @@ describe("express extractor", () => {
       }),
     );
   });
+
+  it("only treats .of() on a real socket.io instance as a websocket namespace", () => {
+    const result = map(FIXTURE_DIR, { frameworkOverride: "express" });
+    const endpoints = result.endpoints.all;
+
+    // Genuine `io.of("/rooms")` on the socket.io server instance → websocket.
+    expect(endpoints).toContainEqual(
+      expect.objectContaining({
+        method: "WS",
+        path: "/rooms",
+        kind: "websocket",
+      }),
+    );
+
+    // `registry.of("/plugins")` is NOT socket.io — it must not be emitted as a
+    // websocket endpoint just because the file imports socket.io elsewhere.
+    expect(endpoints.some((e) => e.path === "/plugins")).toBe(false);
+  });
 });

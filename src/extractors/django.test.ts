@@ -155,4 +155,14 @@ describe("django extractor", () => {
       "api",
     );
   });
+
+  it("resolves views in a nested views/ package to the owning app", () => {
+    // blogapp's ArticleView lives in blogapp/views/pages.py (a nested package,
+    // not next to blogapp/urls.py) and is a page; otherapp defines a same-named
+    // ArticleView that is an api. Each route must resolve within its own app.
+    const result = map(FIXTURE_DIR, { frameworkOverride: "django" });
+    const endpoints = result.endpoints.all;
+    expect(endpoints.find((e) => e.path === "/article")?.kind).toBe("page");
+    expect(endpoints.find((e) => e.path === "/api/article")?.kind).toBe("api");
+  });
 });

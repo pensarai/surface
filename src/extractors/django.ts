@@ -107,11 +107,36 @@ export const django: Extractor = {
       return last;
     };
 
-    // Prefer the declaring directory's definition, else fall back to global.
+    // Resolve a symbol for a urls.py in directory `dir`, preferring the app it
+    // belongs to before the (collision-prone) global registry:
+    //   1. the urls.py's own directory (`views.py` next to `urls.py`), then
+    //   2. any nested view package under the app root — the directory holding
+    //      the urls.py — e.g. `myapp/views/pages.py`, preferring the closest
+    //      such directory, then
+    //   3. the global registry.
+    const lookupInApp = <T>(
+      byDir: Map<string, Record<string, T>>,
+      global: Record<string, T>,
+      name: string,
+      dir: string,
+    ): T | undefined => {
+      const exact = byDir.get(dir)?.[name];
+      if (exact) return exact;
+      let best: { def: T; depth: number } | undefined;
+      const prefix = dir + "/";
+      for (const [d, rec] of byDir) {
+        if (!d.startsWith(prefix)) continue;
+        const def = rec[name];
+        if (def && (!best || d.length < best.depth)) {
+          best = { def, depth: d.length };
+        }
+      }
+      return best?.def ?? global[name];
+    };
     const lookupClass = (name: string, dir: string): ClassDef | undefined =>
-      classesByDir.get(dir)?.[name] ?? globalClasses[name];
+      lookupInApp(classesByDir, globalClasses, name, dir);
     const lookupFunc = (name: string, dir: string): FuncDef | undefined =>
-      funcsByDir.get(dir)?.[name] ?? globalFuncs[name];
+      lookupInApp(funcsByDir, globalFuncs, name, dir);
 
     // A class renders pages if it (transitively) extends one of the Django
     // template CBV bases. Walk the base chain through the registry so an

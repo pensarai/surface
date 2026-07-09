@@ -226,14 +226,52 @@ export const express: Extractor = {
       const rel = ctx.rel(f);
       const lines = buildLineIndex(content);
 
-      // Cheap hint: only run io.* scans when the file references socket.io
-      // patterns. Avoids spurious matches on unrelated `.of(...)` chains.
-      const looksLikeSocketIo =
-        /socket\.io|io\s*\.\s*on\s*\(\s*['"]connection/.test(content);
+      // Identify socket.io server instances so an unrelated `.of(...)` or
+      // `.on("connection", ...)` (e.g. an ORM/collection/query builder) isn't
+      // mistaken for a socket.io namespace/handler. Require an actual socket.io
+      // import — a bare mention of the string is not enough — then collect the
+      // variables bound to a server instance:
+      //   const io = new Server(...) / new SocketIOServer(...)
+      //   const io = require("socket.io")(server)        // v2 inline factory
+      //   const io = sio(server)   // sio from `import sio from "socket.io"` etc.
+      const importsSocketIo = /(?:from\s+|require\(\s*)['"]socket\.io['"]/.test(
+        content,
+      );
+      const ioInstances = new Set<string>();
+      if (importsSocketIo) {
+        for (const m of content.matchAll(
+          /\b(\w+)\s*=\s*new\s+(?:Server|SocketIOServer|IOServer)\s*\(/g,
+        ))
+          ioInstances.add(m[1]!);
+        for (const m of content.matchAll(
+          /\b(\w+)\s*=\s*require\(\s*['"]socket\.io['"]\s*\)\s*\(/g,
+        ))
+          ioInstances.add(m[1]!);
+        // Factory bound to a name and later called: `const sio = require(...)`
+        // or `import sio from "socket.io"`, then `const io = sio(server)`.
+        const factories = new Set<string>();
+        for (const m of content.matchAll(
+          /\b(\w+)\s*=\s*require\(\s*['"]socket\.io['"]\s*\)(?!\s*\()/g,
+        ))
+          factories.add(m[1]!);
+        for (const m of content.matchAll(
+          /import\s+(\w+)\s+from\s+['"]socket\.io['"]/g,
+        ))
+          factories.add(m[1]!);
+        for (const fac of factories) {
+          for (const m of content.matchAll(
+            new RegExp(`\\b(\\w+)\\s*=\\s*${fac}\\s*\\(`, "g"),
+          ))
+            ioInstances.add(m[1]!);
+        }
+      }
 
       const namespacePaths = new Set<string>();
-      if (looksLikeSocketIo) {
+      let emittedRootIo = false;
+      if (ioInstances.size > 0) {
+        // `io.of("/ns")` on a genuine socket.io instance → websocket at "/ns".
         for (const m of content.matchAll(ioOfRe)) {
+          if (!ioInstances.has(m[1]!)) continue;
           const ns = m[3]!;
           namespacePaths.add(ns);
           endpoints.push(
@@ -250,33 +288,34 @@ export const express: Extractor = {
           );
         }
 
-        // A single `io.on("connection", ...)` registers the root "/" namespace.
-        // Only emit once per file even if the pattern appears multiple times.
-        const firstConn = ioOnConnRe.exec(content);
-        ioOnConnRe.lastIndex = 0;
-        if (firstConn && !namespacePaths.has("/")) {
-          endpoints.push(
-            endpoint({
-              method: "WS",
-              kind: "websocket",
-              path: "/",
-              handler: "<anonymous>",
-              file: rel,
-              line: lines.lineAt(firstConn.index),
-              framework: "express",
-            }),
-          );
+        // A single `io.on("connection", ...)` on the instance registers the
+        // root "/" namespace. Only emit once per file.
+        for (const m of content.matchAll(ioOnConnRe)) {
+          if (!ioInstances.has(m[1]!)) continue;
+          if (!namespacePaths.has("/")) {
+            endpoints.push(
+              endpoint({
+                method: "WS",
+                kind: "websocket",
+                path: "/",
+                handler: "<anonymous>",
+                file: rel,
+                line: lines.lineAt(m.index),
+                framework: "express",
+              }),
+            );
+            emittedRootIo = true;
+          }
+          break;
         }
       }
+      ioOnConnRe.lastIndex = 0;
 
       // ws library: each WebSocketServer instantiation is a single endpoint.
       // Path discovery is non-trivial (often configured via separate options
       // or attached to an http server), so we conservatively use "/".
       // Skip if file already emitted a socket.io "/" endpoint to avoid dup.
-      const hasRootIoEndpoint =
-        looksLikeSocketIo &&
-        (namespacePaths.has("/") || ioOnConnRe.test(content));
-      ioOnConnRe.lastIndex = 0;
+      const hasRootIoEndpoint = namespacePaths.has("/") || emittedRootIo;
       if (!hasRootIoEndpoint) {
         for (const m of content.matchAll(wsServerRe)) {
           endpoints.push(

@@ -7,3 +7,10 @@ from rest_framework.response import Response
 class DashboardView(APIView):
     def get(self, request):
         return Response({"ok": True})
+
+
+# Collides by name with blogapp.views.ArticleView (a page in a nested package).
+# This app's route must resolve to THIS api view, not blogapp's page view.
+class ArticleView(APIView):
+    def get(self, request):
+        return Response({"article": None})
