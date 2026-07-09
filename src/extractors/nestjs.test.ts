@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { map } from "../index.ts";
-import { mapRaw } from "../mapper.ts";
 import { nestjs } from "./nestjs.ts";
 import { createScanContext } from "../scan-context.ts";
 
@@ -97,28 +96,27 @@ describe("nestjs code-first gRPC", () => {
   });
 });
 
-describe("proto wins over bare decorator paths at the mapper", () => {
+describe("proto tiebreak + owning-class service resolution", () => {
   const dir = path.join(__dirname, "__fixtures__/nestjs-grpc-proto");
   const grpc = map(dir).endpoints.all.filter((e) => e.grpc);
+  const byPath = (p: string) => grpc.find((e) => e.path === p);
 
-  it("keeps the package-qualified proto endpoints", () => {
-    expect(grpc.length).toBe(3);
-    expect(grpc.every((e) => e.grpc!.serviceFqn === "hero.HeroesService")).toBe(
-      true,
-    );
+  it("on an identical wire path, the proto definition wins over the decorator", () => {
+    // The decorator declares @GrpcMethod('hero.HeroesService', 'FindOne'), which
+    // resolves to the SAME wire path as the proto rpc — on that collision the
+    // canonical proto (framework "grpc") wins.
+    const e = byPath("/hero.HeroesService/FindOne");
+    expect(e).toBeDefined();
+    expect(e!.framework).toBe("grpc");
   });
 
-  it("drops the bare /HeroesService/* decorator duplicates", () => {
-    expect(grpc.some((e) => e.path === "/hero.HeroesService/FindOne")).toBe(
-      true,
-    );
-    expect(grpc.some((e) => e.path.startsWith("/HeroesService/"))).toBe(false);
-  });
-
-  it("dedup lives in mapRaw so impact() sees it too", () => {
-    const rawGrpc = mapRaw(dir).endpoints.filter((e) => e.grpc);
-    expect(rawGrpc.some((e) => e.path.startsWith("/HeroesService/"))).toBe(
-      false,
-    );
+  it("a decorator with no matching proto survives", () => {
+    // @GrpcMethod() with no args in BillingController; the service name resolves
+    // from its OWN class (BillingController -> Billing), not the file's first
+    // class, and there is no proto rpc at that path so it is kept.
+    const e = byPath("/Billing/Charge");
+    expect(e).toBeDefined();
+    expect(e!.framework).toBe("nestjs");
+    expect(e!.grpc!.serviceFqn).toBe("Billing");
   });
 });
