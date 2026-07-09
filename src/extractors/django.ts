@@ -39,24 +39,36 @@ export const django: Extractor = {
 
     // -------------------------------------------------------------------
     // Pass 0: build a registry of class/function definitions across the
-    // project so url entries can be classified as page vs api.
-    // Registry is keyed by the symbol's last segment (e.g. `MyView`),
-    // which matches the way views are typically referenced in urls.py
-    // (`views.MyView.as_view()` → captured ref `views.MyView`).
+    // project so url entries can be classified as page vs api. Definitions
+    // are recorded both per-directory (Django apps keep their views next to
+    // their urls.py) and globally. Resolution prefers the declaring app's own
+    // directory, then falls back to the global registry — so two apps that
+    // each define a `HomeView` / `health` don't clobber each other's kind.
+    // Keys are the symbol's last segment (e.g. `MyView`), matching how views
+    // are referenced in urls.py (`views.MyView.as_view()` → ref `views.MyView`).
     // -------------------------------------------------------------------
-    const classes: Record<string, ClassDef> = {};
-    const funcs: Record<string, FuncDef> = {};
+    const dirOf = (f: string) => f.slice(0, f.lastIndexOf("/"));
+
+    const classesByDir = new Map<string, Record<string, ClassDef>>();
+    const funcsByDir = new Map<string, Record<string, FuncDef>>();
+    const globalClasses: Record<string, ClassDef> = {};
+    const globalFuncs: Record<string, FuncDef> = {};
 
     const classRe = /^class\s+(\w+)\s*\(([^)]*)\)\s*:/gm;
-    // Capture function bodies via "until next top-level def/class or EOF".
-    // JS regex has no \Z; use a lookahead that allows end-of-string by
-    // matching the next top-level def/class OR end-of-string.
+    // Capture the function body until the next top-level def/class or EOF.
+    // `(?:->[^:\n]+)?:[ \t]*\n?` accepts an optional `-> ReturnType` annotation
+    // and both multi-line bodies (colon then newline) and single-line bodies
+    // (`def view(request): return render(...)`), which would otherwise be
+    // skipped and misclassified as api.
     const funcRe =
-      /^def\s+(\w+)\s*\([^)]*\)\s*:\s*\n([\s\S]*?)(?=^(?:def |class )|$(?![\s\S]))/gm;
+      /^def\s+(\w+)\s*\([^)]*\)\s*(?:->[^:\n]+)?:[ \t]*\n?([\s\S]*?)(?=^(?:def |class )|$(?![\s\S]))/gm;
 
     for (const f of pyFiles) {
       const content = ctx.readFile(f);
       if (!content) continue;
+      const dir = dirOf(f);
+      const dirClasses = classesByDir.get(dir) ?? {};
+      const dirFuncs = funcsByDir.get(dir) ?? {};
 
       for (const m of content.matchAll(classRe)) {
         const name = m[1]!;
@@ -65,14 +77,19 @@ export const django: Extractor = {
           .map((b) => b.trim())
           .filter(Boolean)
           .map((b) => b.split(".").pop()!.replace(/\s+/g, ""));
-        classes[name] = { bases };
+        dirClasses[name] = { bases };
+        globalClasses[name] = { bases };
       }
 
       for (const m of content.matchAll(funcRe)) {
         const name = m[1]!;
         const body = m[2] ?? "";
-        funcs[name] = { body };
+        dirFuncs[name] = { body };
+        globalFuncs[name] = { body };
       }
+
+      classesByDir.set(dir, dirClasses);
+      funcsByDir.set(dir, dirFuncs);
     }
 
     // Resolve the meaningful handler name from a view ref.
@@ -88,18 +105,43 @@ export const django: Extractor = {
       return last;
     };
 
-    // Helper: classify a path() entry's view reference.
-    // - CBV with TemplateView/ListView/etc. base = page
+    // Prefer the declaring directory's definition, else fall back to global.
+    const lookupClass = (name: string, dir: string): ClassDef | undefined =>
+      classesByDir.get(dir)?.[name] ?? globalClasses[name];
+    const lookupFunc = (name: string, dir: string): FuncDef | undefined =>
+      funcsByDir.get(dir)?.[name] ?? globalFuncs[name];
+
+    // A class renders pages if it (transitively) extends one of the Django
+    // template CBV bases. Walk the base chain through the registry so an
+    // intermediate project base is still detected — e.g. `HomeView(SiteView)`
+    // where `SiteView(TemplateView)`. `seen` guards against inheritance cycles.
+    const isPageClass = (
+      name: string,
+      dir: string,
+      seen = new Set<string>(),
+    ): boolean => {
+      if (seen.has(name)) return false;
+      seen.add(name);
+      const cls = lookupClass(name, dir);
+      if (!cls) return false;
+      for (const b of cls.bases) {
+        if (PAGE_CBV_BASES.has(b)) return true;
+        if (isPageClass(b, dir, seen)) return true;
+      }
+      return false;
+    };
+
+    // Helper: classify a path() entry's view reference. `dir` is the directory
+    // of the declaring urls.py, used to prefer same-app definitions.
+    // - CBV that (transitively) extends TemplateView/ListView/etc. = page
     // - FBV body containing render(...) = page
     // - everything else = api
-    const classifyView = (viewRef: string): EndpointKind => {
+    const classifyView = (viewRef: string, dir: string): EndpointKind => {
       const handler = resolveHandlerName(viewRef);
-      const cls = classes[handler];
-      if (cls) {
-        if (cls.bases.some((b) => PAGE_CBV_BASES.has(b))) return "page";
-        return "api";
+      if (lookupClass(handler, dir)) {
+        return isPageClass(handler, dir) ? "page" : "api";
       }
-      const fn = funcs[handler];
+      const fn = lookupFunc(handler, dir);
       if (fn && /\brender\s*\(/.test(fn.body)) return "page";
       return "api";
     };
@@ -151,13 +193,14 @@ export const django: Extractor = {
         }
       }
 
+      const urlDir = dirOf(f);
       const lines = buildLineIndex(content);
       for (const m of content.matchAll(directPathRe)) {
         const routePath = m[1]!;
         const viewRef = m[2]!;
         const line = lines.lineAt(m.index);
         const fullPath = normalizePath(ownPrefix + routePath);
-        const kind = classifyView(viewRef);
+        const kind = classifyView(viewRef, urlDir);
 
         endpoints.push(
           endpoint({

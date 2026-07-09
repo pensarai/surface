@@ -10,6 +10,8 @@ import {
 const GO_EXTS = [".go"];
 const GO_GROUP_RE = /(\w+)\s*[:=]+\s*(\w+)\.Group\s*\(\s*['"]([^'"]+)['"]/g;
 
+const dirOf = (f: string) => f.slice(0, f.lastIndexOf("/"));
+
 // Websocket detection signals:
 //   - File imports "github.com/gorilla/websocket" (the de-facto Go ws lib).
 //   - Handler function body contains a `.Upgrade(` call (gorilla's upgrader,
@@ -19,17 +21,18 @@ const GORILLA_WS_IMPORT_RE = /["']github\.com\/gorilla\/websocket["']/;
 const UPGRADE_CALL_RE = /\.\s*Upgrade\s*\(/;
 
 /**
- * Build a per-file map of websocket-handler names. A file's handler is a
- * websocket handler iff the file imports gorilla/websocket AND the function
- * body contains `.Upgrade(`. Returns the set of handler names found across
- * all scanned Go files (handler names are typically globally unique within
- * a Go package, which is good enough for this heuristic).
+ * Build a map of websocket-handler names keyed by the directory (Go package)
+ * they live in. A handler is a websocket handler iff its file imports
+ * gorilla/websocket AND the function body contains `.Upgrade(`. Scoping by
+ * directory (rather than one repo-wide set) prevents an ordinary HTTP route in
+ * one package from being mislabeled `websocket` just because an unrelated
+ * package happens to define a `.Upgrade(`-ing handler with the same name.
  */
 function findWebsocketHandlers(
   ctx: Parameters<Extractor["extract"]>[0],
   goFiles: string[],
-): Set<string> {
-  const wsHandlers = new Set<string>();
+): Map<string, Set<string>> {
+  const byDir = new Map<string, Set<string>>();
   // Match a top-level `func Name(...)` or `func (recv T) Name(...)` and capture
   // its body via balanced braces below.
   const funcRe = /\bfunc\s+(?:\([^)]*\)\s+)?(\w+)\s*\([^)]*\)[^{]*\{/g;
@@ -38,6 +41,8 @@ function findWebsocketHandlers(
     const content = ctx.readFile(f);
     if (!content) continue;
     if (!GORILLA_WS_IMPORT_RE.test(content)) continue;
+    const dir = dirOf(f);
+    const set = byDir.get(dir) ?? new Set<string>();
 
     for (const m of content.matchAll(funcRe)) {
       const name = m[1]!;
@@ -55,10 +60,11 @@ function findWebsocketHandlers(
         i++;
       }
       const body = content.slice(bodyStart, i - 1);
-      if (UPGRADE_CALL_RE.test(body)) wsHandlers.add(name);
+      if (UPGRADE_CALL_RE.test(body)) set.add(name);
     }
+    byDir.set(dir, set);
   }
-  return wsHandlers;
+  return byDir;
 }
 
 function extractGoFramework(
@@ -69,8 +75,8 @@ function extractGoFramework(
   const endpoints: EndpointInfo[] = [];
   const goFiles = ctx.iterFiles(GO_EXTS);
 
-  // Pass 0: collect websocket handler names across the repo.
-  const wsHandlers = findWebsocketHandlers(ctx, goFiles);
+  // Pass 0: collect websocket handler names, scoped per directory (package).
+  const wsHandlersByDir = findWebsocketHandlers(ctx, goFiles);
 
   // Pass 1: find group definitions
   const groupPrefixes: Record<string, string> = {};
@@ -104,10 +110,12 @@ function extractGoFramework(
     const rel = ctx.rel(f);
     const lines = buildLineIndex(content);
     // A route's handler is a ws handler if either:
-    //   (a) the resolved handler name is in wsHandlers, OR
+    //   (a) the handler name is a ws handler defined in the SAME directory
+    //       (package), OR
     //   (b) the route handler args themselves contain `.Upgrade(` (inline
     //       upgrade) AND the file imports gorilla/websocket.
     const fileImportsGorilla = GORILLA_WS_IMPORT_RE.test(content);
+    const wsHandlers = wsHandlersByDir.get(dirOf(f)) ?? new Set<string>();
 
     for (const m of content.matchAll(routeRe)) {
       const varName = m[1]!;
@@ -208,12 +216,13 @@ export const netHttp: Extractor = {
       /(?:http\.HandleFunc|mux\.HandleFunc|http\.Handle|mux\.Handle)\s*\(\s*['"]([^'"]+)['"]\s*,\s*(\w+)/g;
 
     // gorilla/websocket import + .Upgrade() call in handler body = websocket route.
-    const wsHandlers = findWebsocketHandlers(ctx, goFiles);
+    const wsHandlersByDir = findWebsocketHandlers(ctx, goFiles);
 
     for (const f of goFiles) {
       const content = ctx.readFile(f);
       if (!content) continue;
       const rel = ctx.rel(f);
+      const wsHandlers = wsHandlersByDir.get(dirOf(f)) ?? new Set<string>();
 
       const lines = buildLineIndex(content);
       for (const m of content.matchAll(handleRe)) {

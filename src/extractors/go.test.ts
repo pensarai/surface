@@ -18,4 +18,13 @@ describe("go (gin) extractor", () => {
       expect.objectContaining({ path: "/ws", kind: "websocket" }),
     );
   });
+
+  it("does not let a ws handler name in another package bleed across packages", () => {
+    // internal/ws.go defines a `listUsers` that upgrades; the main package's
+    // `/api/users` → listUsers is plain HTTP. Per-package scoping keeps it api.
+    const result = map(FIXTURE_DIR, { frameworkOverride: "gin" });
+    const users = result.endpoints.all.find((e) => e.path === "/api/users");
+    expect(users?.kind).toBe("api");
+    expect(users?.method).not.toBe("WS");
+  });
 });

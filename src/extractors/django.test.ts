@@ -110,4 +110,39 @@ describe("django extractor", () => {
       }),
     );
   });
+
+  it("classifies a CBV that inherits a template base indirectly as page", () => {
+    // DashboardView(SiteBaseView) where SiteBaseView(TemplateView) — the page
+    // signal is one hop up the inheritance chain.
+    const result = map(FIXTURE_DIR, { frameworkOverride: "django" });
+    expect(result.endpoints.all).toContainEqual(
+      expect.objectContaining({
+        kind: "page",
+        path: "/dashboard",
+        handler: "DashboardView",
+      }),
+    );
+  });
+
+  it("classifies a single-line FBV that renders as page", () => {
+    const result = map(FIXTURE_DIR, { frameworkOverride: "django" });
+    expect(result.endpoints.all).toContainEqual(
+      expect.objectContaining({
+        kind: "page",
+        path: "/status",
+        handler: "status_page",
+      }),
+    );
+  });
+
+  it("resolves same-named views per app (no registry collision)", () => {
+    // Two apps both define `DashboardView`: myapp's is a page (template CBV),
+    // otherapp's is an api (DRF APIView). Each route must get its own app's kind.
+    const result = map(FIXTURE_DIR, { frameworkOverride: "django" });
+    const endpoints = result.endpoints.all;
+    expect(endpoints.find((e) => e.path === "/dashboard")?.kind).toBe("page");
+    expect(endpoints.find((e) => e.path === "/api/dashboard")?.kind).toBe(
+      "api",
+    );
+  });
 });
