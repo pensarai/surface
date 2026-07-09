@@ -80,7 +80,7 @@ describe("grpc connect detection", () => {
     expect(grpcEps[0]!.transport).toBe("connect");
   });
 
-  test("scopes connect vs plain gRPC per package in a monorepo", () => {
+  it("scopes connect vs plain gRPC per package in a monorepo", () => {
     const mixed = extract("grpc-mixed");
     const byPath = (p: string) => mixed.find((e) => e.path === p);
     expect(byPath("/eliza.v1.ElizaService/Say")!.transport).toBe("connect");

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { map } from "../index.ts";
+import { mapRaw } from "../mapper.ts";
 import { nestjs } from "./nestjs.ts";
 import { createScanContext } from "../scan-context.ts";
 
@@ -112,5 +113,12 @@ describe("proto wins over bare decorator paths at the mapper", () => {
       true,
     );
     expect(grpc.some((e) => e.path.startsWith("/HeroesService/"))).toBe(false);
+  });
+
+  it("dedup lives in mapRaw so impact() sees it too", () => {
+    const rawGrpc = mapRaw(dir).endpoints.filter((e) => e.grpc);
+    expect(rawGrpc.some((e) => e.path.startsWith("/HeroesService/"))).toBe(
+      false,
+    );
   });
 });
