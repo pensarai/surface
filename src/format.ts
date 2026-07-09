@@ -339,12 +339,12 @@ export function formatMarkdown(
 
       for (const ep of svcEndpoints) {
         const auth = ep.auth.join(", ");
-        const label =
+        const methodLabel =
           ep.transport && ep.transport !== "http"
             ? ep.transport.toUpperCase()
             : ep.method;
         lines.push(
-          `| ${label} | \`${ep.path}\` | ${ep.handler} | ${ep.file}:${ep.line} | ${auth} |`,
+          `| ${methodLabel} | \`${ep.path}\` | ${ep.handler} | ${ep.file}:${ep.line} | ${auth} |`,
         );
       }
     }
@@ -356,12 +356,12 @@ export function formatMarkdown(
 
       for (const ep of fwEndpoints) {
         const auth = ep.auth.join(", ");
-        const label =
+        const methodLabel =
           ep.transport && ep.transport !== "http"
             ? ep.transport.toUpperCase()
             : ep.method;
         lines.push(
-          `| ${label} | \`${ep.path}\` | ${ep.handler} | ${ep.file}:${ep.line} | ${auth} |`,
+          `| ${methodLabel} | \`${ep.path}\` | ${ep.handler} | ${ep.file}:${ep.line} | ${auth} |`,
         );
       }
     }
