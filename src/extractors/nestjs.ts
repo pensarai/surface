@@ -25,6 +25,55 @@ interface ClassRange {
   decorators: string;
 }
 
+/** Replace the contents of `//` and `/* *\/` comments with spaces (newlines
+ *  preserved) so byte offsets are unchanged. String-aware, so a `//` or `class`
+ *  inside a quoted literal is left intact. Used to keep a `class` token that
+ *  only appears in a comment (e.g. `// class OldController`) from being treated
+ *  as a real class boundary. */
+function maskComments(src: string): string {
+  let out = "";
+  let i = 0;
+  const n = src.length;
+  while (i < n) {
+    const c = src[i]!;
+    if (c === '"' || c === "'" || c === "`") {
+      out += c;
+      i++;
+      while (i < n) {
+        if (src[i] === "\\" && i + 1 < n) {
+          out += src[i]! + src[i + 1]!;
+          i += 2;
+          continue;
+        }
+        out += src[i];
+        const done = src[i] === c;
+        i++;
+        if (done) break;
+      }
+    } else if (c === "/" && src[i + 1] === "/") {
+      while (i < n && src[i] !== "\n") {
+        out += " ";
+        i++;
+      }
+    } else if (c === "/" && src[i + 1] === "*") {
+      out += "  ";
+      i += 2;
+      while (i < n && !(src[i] === "*" && src[i + 1] === "/")) {
+        out += src[i] === "\n" ? "\n" : " ";
+        i++;
+      }
+      if (i < n) {
+        out += "  ";
+        i += 2;
+      }
+    } else {
+      out += c;
+      i++;
+    }
+  }
+  return out;
+}
+
 /** Return the contiguous decorator/comment block immediately preceding the
  *  `class` keyword at `classStart`. Walking outward line-by-line (rather than
  *  slicing back to the previous class) keeps a *previous* class's body — which
@@ -68,7 +117,11 @@ function classDecoratorBlock(content: string, classStart: number): string {
 function findClasses(content: string): ClassRange[] {
   const classes: ClassRange[] = [];
   const classRe = /\bclass\s+(\w+)/g;
-  for (const m of content.matchAll(classRe)) {
+  // Detect class boundaries on a comment-masked copy so a `class` token inside
+  // a comment doesn't create a phantom class (offsets are preserved, so the
+  // original `content` is still used for decorator slicing).
+  const scan = maskComments(content);
+  for (const m of scan.matchAll(classRe)) {
     const start = m.index!;
     const name = m[1]!;
     const decorators = classDecoratorBlock(content, start);

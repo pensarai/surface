@@ -10,7 +10,13 @@ import {
 const GO_EXTS = [".go"];
 const GO_GROUP_RE = /(\w+)\s*[:=]+\s*(\w+)\.Group\s*\(\s*['"]([^'"]+)['"]/g;
 
-const dirOf = (f: string) => f.slice(0, f.lastIndexOf("/"));
+// Normalize to `/` so package (directory) keys are consistent and work on
+// Windows scan paths (which use `\`) as well as POSIX ones.
+const dirOf = (f: string) => {
+  const norm = f.replace(/\\/g, "/");
+  const i = norm.lastIndexOf("/");
+  return i < 0 ? "" : norm.slice(0, i);
+};
 
 // Websocket detection signals:
 //   - File imports "github.com/gorilla/websocket" (the de-facto Go ws lib).

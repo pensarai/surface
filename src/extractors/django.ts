@@ -47,7 +47,13 @@ export const django: Extractor = {
     // Keys are the symbol's last segment (e.g. `MyView`), matching how views
     // are referenced in urls.py (`views.MyView.as_view()` → ref `views.MyView`).
     // -------------------------------------------------------------------
-    const dirOf = (f: string) => f.slice(0, f.lastIndexOf("/"));
+    // Normalize to `/` so directory keys are consistent and `lastIndexOf`
+    // works on Windows scan paths (which use `\`) as well as POSIX ones.
+    const dirOf = (f: string) => {
+      const norm = f.replace(/\\/g, "/");
+      const i = norm.lastIndexOf("/");
+      return i < 0 ? "" : norm.slice(0, i);
+    };
 
     const classesByDir = new Map<string, Record<string, ClassDef>>();
     const funcsByDir = new Map<string, Record<string, FuncDef>>();

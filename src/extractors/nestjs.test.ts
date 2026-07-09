@@ -64,6 +64,15 @@ describe("nestjs extractor", () => {
     expect(one?.path).toBe("/alpha/one");
     expect(two?.path).toBe("/beta/two");
   });
+
+  it("ignores a `class` token that only appears in a comment", () => {
+    // RealController has `// class Helper` between its decorator and handler.
+    // The comment must not create a phantom class that steals the handler and
+    // drops the "/real" prefix.
+    const result = map(FIXTURE_DIR, { frameworkOverride: "nestjs" });
+    const ping = result.endpoints.all.find((e) => e.handler === "ping");
+    expect(ping?.path).toBe("/real/ping");
+  });
 });
 
 describe("nestjs code-first gRPC", () => {
