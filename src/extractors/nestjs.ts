@@ -25,6 +25,42 @@ interface ClassRange {
   decorators: string;
 }
 
+/** Return the contiguous decorator/comment block immediately preceding the
+ *  `class` keyword at `classStart`. Walking outward line-by-line (rather than
+ *  slicing back to the previous class) keeps a *previous* class's body — which
+ *  may itself contain `@Controller(...)` / `@WebSocketGateway(...)` — from
+ *  bleeding into this class's decorator attribution. Stops at the first line
+ *  that ends a previous statement/class (`}` / `;`) or otherwise looks like
+ *  code. */
+function classDecoratorBlock(content: string, classStart: number): string {
+  const lineStart = (pos: number) => {
+    let p = pos;
+    while (p > 0 && content[p - 1] !== "\n") p--;
+    return p;
+  };
+  const isStackLine = (line: string) =>
+    line === "" ||
+    line.startsWith("@") ||
+    line.startsWith("//") ||
+    line.startsWith("/*") ||
+    line.startsWith("*") ||
+    line.endsWith(",") ||
+    line.endsWith("(") ||
+    line.endsWith(")");
+  const endsPrevStatement = (line: string) =>
+    line.endsWith("}") || line.endsWith(";");
+
+  let start = lineStart(classStart);
+  while (start > 0) {
+    const prev = lineStart(start - 1);
+    const line = content.slice(prev, start - 1).trim();
+    if (endsPrevStatement(line)) break;
+    if (!isStackLine(line)) break;
+    start = prev;
+  }
+  return content.slice(start, classStart);
+}
+
 /** Find every `class Foo` declaration with the decorator preamble that
  *  immediately precedes it. Used to associate methods with their owning
  *  class so we can read class-level decorators (e.g. @WebSocketGateway,
@@ -32,15 +68,13 @@ interface ClassRange {
 function findClasses(content: string): ClassRange[] {
   const classes: ClassRange[] = [];
   const classRe = /\bclass\s+(\w+)/g;
-  let lastEnd = 0;
   for (const m of content.matchAll(classRe)) {
     const start = m.index!;
     const name = m[1]!;
-    const decorators = content.slice(lastEnd, start);
+    const decorators = classDecoratorBlock(content, start);
     // Patch the previous class's `end` to be this class's start
     if (classes.length > 0) classes[classes.length - 1]!.end = start;
     classes.push({ start, end: content.length, name, decorators });
-    lastEnd = start;
   }
   return classes;
 }

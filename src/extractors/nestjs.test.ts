@@ -50,4 +50,16 @@ describe("nestjs extractor", () => {
     expect(data).toBeDefined();
     expect(data?.kind).toBe("api");
   });
+
+  it("attributes each @Controller prefix to its own class in a multi-class file", () => {
+    const result = map(FIXTURE_DIR, { frameworkOverride: "nestjs" });
+    const endpoints = result.endpoints.all;
+
+    // Two controllers share one file. Each route must carry its own class
+    // prefix, not the first class's prefix bleeding onto later classes.
+    const one = endpoints.find((e) => e.handler === "one");
+    const two = endpoints.find((e) => e.handler === "two");
+    expect(one?.path).toBe("/alpha/one");
+    expect(two?.path).toBe("/beta/two");
+  });
 });

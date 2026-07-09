@@ -173,8 +173,9 @@ export const rails: Extractor = {
 
       // Update depth from this line's block keywords. Heuristic: any `do` or
       // trailing `do |x|` opens a block; a standalone `end` closes one.
-      const doMatches = code.match(/\bdo\b(?:\s*\|[^|]*\|)?\s*$/);
-      if (doMatches) depth++;
+      // Ruby closes the current block (`end`) before opening a new one, so on a
+      // combined line like `end; scope do` the `end` must be applied against the
+      // pre-`do` depth — process `end` first so namespaces pop at the right depth.
       const endMatches = /^\s*end\b/.test(code);
       if (endMatches) {
         depth = Math.max(0, depth - 1);
@@ -185,6 +186,8 @@ export const rails: Extractor = {
           nsStack.pop();
         }
       }
+      const doMatches = code.match(/\bdo\b(?:\s*\|[^|]*\|)?\s*$/);
+      if (doMatches) depth++;
 
       const prefix = nsStack.length
         ? "/" + nsStack.map((n) => n.name).join("/")
