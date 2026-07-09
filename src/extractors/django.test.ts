@@ -36,6 +36,17 @@ describe("django url extraction", () => {
     expect(endpoints.find((e) => e.handler === "post_detail")).toBeDefined();
   });
 
+  it("classifies re_path()/string-prefixed routes with a kind", () => {
+    // #12's re_path()/raw-string routes must flow through the same kind
+    // classification as plain path() routes — an undefined kind would mean the
+    // newer parsing bypassed the page-vs-api logic.
+    const reRoute = endpoints.find((e) => e.handler === "post_detail");
+    expect(reRoute?.kind).toBe("api");
+    for (const e of endpoints) {
+      expect(e.kind).toBeDefined();
+    }
+  });
+
   it("applies include() prefix to mounted app routes", () => {
     // Unprefixed it would be "/posts"; the include mounts blog.urls at /blog.
     expect(byPath("/posts")).toBeUndefined();
