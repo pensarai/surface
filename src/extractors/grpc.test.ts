@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { resolve } from "path";
 import { grpc } from "./grpc.ts";
 import { createScanContext } from "../scan-context.ts";
+import { map } from "../mapper.ts";
+import { getExtractor } from "./index.ts";
 
 function extract(fixture: string) {
   const dir = resolve(import.meta.dir, "../../scripts/fixtures", fixture);
@@ -63,5 +65,15 @@ describe("grpc connect detection", () => {
     expect(eps[0]!.transport).toBe("connect");
     expect(eps[0]!.framework).toBe("connect");
     expect(eps[0]!.path).toBe("/connectrpc.eliza.v1.ElizaService/Say");
+  });
+
+  test("`--framework connect` resolves the grpc extractor", () => {
+    expect(getExtractor("connect")).toBe(grpc);
+    const dir = resolve(import.meta.dir, "../../scripts/fixtures/grpc-connect");
+    const grpcEps = map(dir, {
+      frameworkOverride: "connect",
+    }).endpoints.all.filter((e) => e.grpc);
+    expect(grpcEps.length).toBe(1);
+    expect(grpcEps[0]!.transport).toBe("connect");
   });
 });

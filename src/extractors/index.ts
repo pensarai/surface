@@ -39,6 +39,9 @@ const ALL_EXTRACTORS: Extractor[] = [
 const EXTRACTOR_MAP = new Map<FrameworkId, Extractor>(
   ALL_EXTRACTORS.map((e) => [e.id, e]),
 );
+// The grpc extractor emits both grpc and connect transports (it picks the
+// variant from the toolchain), so `--framework connect` resolves to it too.
+EXTRACTOR_MAP.set("connect", grpc);
 
 export function getExtractor(id: FrameworkId): Extractor | undefined {
   return EXTRACTOR_MAP.get(id);
