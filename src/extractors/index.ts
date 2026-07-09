@@ -13,6 +13,7 @@ import { laravel } from "./laravel.ts";
 import { sst } from "./sst.ts";
 import { serverActions } from "./server-actions.ts";
 import { openapi } from "./openapi.ts";
+import { grpc } from "./grpc.ts";
 
 const ALL_EXTRACTORS: Extractor[] = [
   flask,
@@ -32,6 +33,7 @@ const ALL_EXTRACTORS: Extractor[] = [
   sst,
   serverActions,
   openapi,
+  grpc,
 ];
 
 const EXTRACTOR_MAP = new Map<FrameworkId, Extractor>(

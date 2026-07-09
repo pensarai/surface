@@ -391,7 +391,7 @@ export function map(repoPath: string, options: MapOptions = {}): MapResult {
   const seen = new Set<string>();
   const unique: EndpointInfo[] = [];
   for (const ep of raw.endpoints) {
-    const key = `${ep.method}::${ep.path}`;
+    const key = `${ep.transport ?? "http"}::${ep.method}::${ep.path}`;
     if (!seen.has(key)) {
       seen.add(key);
       unique.push(ep);

@@ -62,7 +62,11 @@ function renderEndpointRows(
 ): string[] {
   const lines: string[] = [];
   for (const ep of endpoints) {
-    const badge = methodBadge(ep.method);
+    const badge = methodBadge(
+      ep.transport && ep.transport !== "http"
+        ? ep.transport.toUpperCase()
+        : ep.method,
+    );
     const path =
       ep.path.length > pathW
         ? ep.path.slice(0, pathW - 1) + "…"
@@ -220,6 +224,8 @@ export function formatJson(result: MapResult, options?: FormatOptions): string {
         framework: e.framework,
       };
       if (e.handlerFile) obj.handlerFile = e.handlerFile;
+      if (e.transport) obj.transport = e.transport;
+      if (e.grpc) obj.grpc = e.grpc;
       if (e.service) obj.service = e.service;
       if (e.params.length) obj.params = e.params;
       if (e.auth.length) obj.auth = e.auth;
@@ -272,6 +278,8 @@ export function formatNdjson(
       framework: e.framework,
     };
     if (e.handlerFile) obj.handlerFile = e.handlerFile;
+    if (e.transport) obj.transport = e.transport;
+    if (e.grpc) obj.grpc = e.grpc;
     if (e.service) obj.service = e.service;
     if (e.params.length) obj.params = e.params;
     if (e.auth.length) obj.auth = e.auth;
@@ -331,8 +339,12 @@ export function formatMarkdown(
 
       for (const ep of svcEndpoints) {
         const auth = ep.auth.join(", ");
+        const label =
+          ep.transport && ep.transport !== "http"
+            ? ep.transport.toUpperCase()
+            : ep.method;
         lines.push(
-          `| ${ep.method} | \`${ep.path}\` | ${ep.handler} | ${ep.file}:${ep.line} | ${auth} |`,
+          `| ${label} | \`${ep.path}\` | ${ep.handler} | ${ep.file}:${ep.line} | ${auth} |`,
         );
       }
     }
@@ -344,8 +356,12 @@ export function formatMarkdown(
 
       for (const ep of fwEndpoints) {
         const auth = ep.auth.join(", ");
+        const label =
+          ep.transport && ep.transport !== "http"
+            ? ep.transport.toUpperCase()
+            : ep.method;
         lines.push(
-          `| ${ep.method} | \`${ep.path}\` | ${ep.handler} | ${ep.file}:${ep.line} | ${auth} |`,
+          `| ${label} | \`${ep.path}\` | ${ep.handler} | ${ep.file}:${ep.line} | ${auth} |`,
         );
       }
     }

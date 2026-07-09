@@ -12,6 +12,9 @@ export const nestjs: Extractor = {
   extract(ctx) {
     const endpoints: EndpointInfo[] = [];
     const tsFiles = ctx.iterFiles([".ts"]);
+    // When the repo ships `.proto`, the proto extractor is the authoritative
+    // source of gRPC methods; skip decorator scanning to avoid duplicates.
+    const codeFirstGrpc = ctx.iterFiles([".proto"]).length === 0;
 
     const controllerRe = /@Controller\s*\(\s*['"]([^'"]*)['"]\s*\)/;
     const methodRe =
@@ -72,6 +75,43 @@ export const nestjs: Extractor = {
             auth: methodAuth,
           }),
         );
+      }
+    }
+
+    if (codeFirstGrpc) {
+      const grpcRe =
+        /@(GrpcMethod|GrpcStreamMethod)\s*\(([^)]*)\)[\s\S]{0,160}?(?:async\s+)?(\w+)\s*\(/g;
+      for (const f of tsFiles) {
+        const content = ctx.readFile(f);
+        if (!content || !content.includes("@Grpc")) continue;
+        const rel = ctx.rel(f);
+        const lines = buildLineIndex(content);
+        const className = /class\s+(\w+)/.exec(content)?.[1] ?? "";
+        for (const m of content.matchAll(grpcRe)) {
+          const args = [...m[2]!.matchAll(/['"]([^'"]+)['"]/g)].map(
+            (a) => a[1]!,
+          );
+          const handler = m[3]!;
+          const service = args[0] ?? className.replace(/Controller$/, "");
+          const method =
+            args[1] ?? handler.charAt(0).toUpperCase() + handler.slice(1);
+          endpoints.push(
+            endpoint({
+              method: "ANY",
+              path: `/${service}/${method}`,
+              handler,
+              file: rel,
+              line: lines.lineAt(m.index),
+              framework: "nestjs",
+              transport: "grpc",
+              grpc: {
+                serviceFqn: service,
+                method,
+                streamingType: m[1] === "GrpcStreamMethod" ? "bidi" : "unary",
+              },
+            }),
+          );
+        }
       }
     }
 

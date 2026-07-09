@@ -1,7 +1,9 @@
 import type {
   EndpointInfo,
   EndpointKind,
+  EndpointTransport,
   FrameworkId,
+  GrpcMeta,
   HttpMethod,
   ParamInfo,
 } from "./types.ts";
@@ -104,6 +106,8 @@ export function endpoint(e: {
   kind?: EndpointKind;
   params?: ParamInfo[];
   auth?: string[];
+  transport?: EndpointTransport;
+  grpc?: GrpcMeta;
   service?: string;
   handlerFile?: string;
   serviceRoot?: string;
@@ -120,6 +124,8 @@ export function endpoint(e: {
     auth: e.auth ?? [],
     internal: false,
   };
+  if (e.transport) ep.transport = e.transport;
+  if (e.grpc) ep.grpc = e.grpc;
   if (e.service) ep.service = e.service;
   if (e.handlerFile) ep.handlerFile = e.handlerFile;
   if (e.serviceRoot) ep.serviceRoot = e.serviceRoot;
