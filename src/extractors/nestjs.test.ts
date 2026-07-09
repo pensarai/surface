@@ -1,58 +1,128 @@
-import { describe, expect, test } from "bun:test";
-import { resolve } from "path";
+import { describe, it, expect } from "vitest";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { map } from "../index.ts";
 import { nestjs } from "./nestjs.ts";
 import { createScanContext } from "../scan-context.ts";
-import { map } from "../mapper.ts";
 
-function extract(fixture: string) {
-  const dir = resolve(import.meta.dir, "../../scripts/fixtures", fixture);
-  return nestjs.extract(createScanContext(dir));
-}
+// Pattern for kind-detection tests:
+//   1. Load fixture dir under src/extractors/__fixtures__/<framework>/
+//   2. Call map() against it (filter via frameworkOverride for isolation)
+//   3. Assert endpoints contain expected shapes by kind using
+//      expect.objectContaining so unrelated fields don't break the match.
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const FIXTURE_DIR = path.join(__dirname, "__fixtures__/nestjs");
+
+describe("nestjs extractor", () => {
+  it("emits correct kinds for api, page, and websocket routes", () => {
+    const result = map(FIXTURE_DIR, { frameworkOverride: "nestjs" });
+    const endpoints = result.endpoints.all;
+
+    expect(endpoints).toContainEqual(
+      expect.objectContaining({
+        method: "GET",
+        path: expect.stringContaining("users"),
+        kind: "api",
+      }),
+    );
+
+    expect(endpoints).toContainEqual(
+      expect.objectContaining({
+        path: expect.stringContaining("about"),
+        kind: "page",
+      }),
+    );
+
+    expect(endpoints).toContainEqual(
+      expect.objectContaining({
+        path: expect.stringContaining("message"),
+        kind: "websocket",
+      }),
+    );
+  });
+
+  it("does not let @Render bleed onto sibling api methods", () => {
+    const result = map(FIXTURE_DIR, { frameworkOverride: "nestjs" });
+    const endpoints = result.endpoints.all;
+
+    // The "/data" endpoint sits directly below a @Render-decorated method
+    // in the same controller. Its kind must be "api", not "page".
+    const data = endpoints.find((e) => e.path.endsWith("data"));
+    expect(data).toBeDefined();
+    expect(data?.kind).toBe("api");
+  });
+
+  it("attributes each @Controller prefix to its own class in a multi-class file", () => {
+    const result = map(FIXTURE_DIR, { frameworkOverride: "nestjs" });
+    const endpoints = result.endpoints.all;
+
+    // Two controllers share one file. Each route must carry its own class
+    // prefix, not the first class's prefix bleeding onto later classes.
+    const one = endpoints.find((e) => e.handler === "one");
+    const two = endpoints.find((e) => e.handler === "two");
+    expect(one?.path).toBe("/alpha/one");
+    expect(two?.path).toBe("/beta/two");
+  });
+
+  it("ignores a `class` token that only appears in a comment", () => {
+    // RealController has `// class Helper` between its decorator and handler.
+    // The comment must not create a phantom class that steals the handler and
+    // drops the "/real" prefix.
+    const result = map(FIXTURE_DIR, { frameworkOverride: "nestjs" });
+    const ping = result.endpoints.all.find((e) => e.handler === "ping");
+    expect(ping?.path).toBe("/real/ping");
+  });
+});
 
 describe("nestjs code-first gRPC", () => {
-  const eps = extract("nestjs-grpc");
+  const eps = nestjs.extract(
+    createScanContext(path.join(__dirname, "__fixtures__/nestjs-grpc")),
+  );
   const grpc = eps.filter((e) => e.transport === "grpc");
   const byPath = (p: string) => grpc.find((e) => e.path === p);
 
-  test("extracts @GrpcMethod handlers with explicit service + method", () => {
+  it("extracts @GrpcMethod handlers with explicit service + method", () => {
     expect(byPath("/HeroesService/FindOne")).toBeDefined();
   });
 
-  test("derives the method name from the handler when the arg is omitted", () => {
+  it("derives the method name from the handler when the arg is omitted", () => {
     // @GrpcMethod('HeroesService') on findAll() -> FindAll
     expect(byPath("/HeroesService/FindAll")).toBeDefined();
   });
 
-  test("@GrpcStreamMethod is marked as streaming", () => {
+  it("@GrpcStreamMethod is marked as streaming", () => {
     expect(byPath("/HeroesService/StreamHeroes")!.grpc!.streamingType).toBe(
       "bidi",
     );
   });
 
-  test("keeps framework nestjs, transport grpc", () => {
+  it("keeps framework nestjs, transport grpc, kind api", () => {
     const e = byPath("/HeroesService/FindOne")!;
     expect(e.framework).toBe("nestjs");
     expect(e.transport).toBe("grpc");
+    expect(e.kind).toBe("api");
   });
 });
 
 describe("proto tiebreak + owning-class service resolution", () => {
-  const dir = resolve(
-    import.meta.dir,
-    "../../scripts/fixtures/nestjs-grpc-proto",
-  );
+  const dir = path.join(__dirname, "__fixtures__/nestjs-grpc-proto");
   const grpc = map(dir).endpoints.all.filter((e) => e.grpc);
   const byPath = (p: string) => grpc.find((e) => e.path === p);
 
-  test("on an identical wire path, the proto definition wins over the decorator", () => {
+  it("on an identical wire path, the proto definition wins over the decorator", () => {
+    // The decorator declares @GrpcMethod('hero.HeroesService', 'FindOne'), which
+    // resolves to the SAME wire path as the proto rpc — on that collision the
+    // canonical proto (framework "grpc") wins.
     const e = byPath("/hero.HeroesService/FindOne");
     expect(e).toBeDefined();
     expect(e!.framework).toBe("grpc");
   });
 
-  test("a decorator with no matching proto survives", () => {
-    // @GrpcMethod() with no args in BillingController; resolved from its OWN
-    // class (BillingController -> Billing), not the file's first class.
+  it("a decorator with no matching proto survives", () => {
+    // @GrpcMethod() with no args in BillingController; the service name resolves
+    // from its OWN class (BillingController -> Billing), not the file's first
+    // class, and there is no proto rpc at that path so it is kept.
     const e = byPath("/Billing/Charge");
     expect(e).toBeDefined();
     expect(e!.framework).toBe("nestjs");
