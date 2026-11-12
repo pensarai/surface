@@ -18,8 +18,9 @@
  *
  * Run: node scripts/check-dependency-pins.mjs
  */
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SECTIONS = [
@@ -41,16 +42,22 @@ function isExact(spec) {
   return alias !== null && EXACT.test(alias[2]);
 }
 
-/** A workspace glob as a RegExp: `*` is one path segment, `**` is any depth. */
+/** A workspace glob as a RegExp: `*` is one path segment, `**` is any number of them, including none. */
 function globToRegExp(glob) {
   const source = glob
     .replace(/^\.\//, "")
     .replace(/\/$/, "")
-    .split("**")
-    .map((part) =>
-      part.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*"),
+    .split("/")
+    .map((segment) =>
+      segment === "**"
+        ? "**"
+        : segment.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*+/g, "[^/]*"),
     )
-    .join(".*");
+    .join("/")
+    .replace(/\/\*\*\//g, "/(?:.*/)?")
+    .replace(/^\*\*\//, "(?:.*/)?")
+    .replace(/\/\*\*$/, "(?:/.*)?")
+    .replace(/^\*\*$/, ".*");
   return new RegExp(`^${source}$`);
 }
 
@@ -179,30 +186,37 @@ export function npmrcSavesExact(npmrc) {
   return value === "true";
 }
 
+/**
+ * Every package.json git tracks or would track. Asking git, instead of walking
+ * the tree, covers hidden directories such as `.github` and leaves out ignored
+ * build output such as `node_modules`.
+ */
 function collectManifests(root) {
-  const out = [];
-  const walk = (dir) => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const full = join(dir, entry.name);
-      // Forward slashes on every platform, so the ignore list and reported paths match.
-      const rel = relative(root, full).split(sep).join("/");
-      if (entry.isDirectory()) {
-        if (entry.name === "node_modules" || entry.name.startsWith("."))
-          continue;
-        if (
-          IGNORED_DIRS.some(
-            (ignored) => rel === ignored || rel.startsWith(`${ignored}/`),
-          )
-        )
-          continue;
-        walk(full);
-      } else if (entry.name === "package.json") {
-        out.push({ path: rel, pkg: JSON.parse(readFileSync(full, "utf8")) });
-      }
-    }
-  };
-  walk(root);
-  return out.sort((a, b) => a.path.localeCompare(b.path));
+  const listed = execFileSync(
+    "git",
+    [
+      "ls-files",
+      "--cached",
+      "--others",
+      "--exclude-standard",
+      "-z",
+      "--",
+      "package.json",
+      "**/package.json",
+    ],
+    { cwd: root, encoding: "utf8" },
+  );
+  return listed
+    .split("\0")
+    .filter((path) => path !== "" && existsSync(join(root, path)))
+    .filter(
+      (path) => !IGNORED_DIRS.some((ignored) => path.startsWith(`${ignored}/`)),
+    )
+    .sort((a, b) => a.localeCompare(b))
+    .map((path) => ({
+      path,
+      pkg: JSON.parse(readFileSync(join(root, path), "utf8")),
+    }));
 }
 
 /**

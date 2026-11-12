@@ -171,6 +171,22 @@ describe("findUnpinned", () => {
     );
   });
 
+  it("lets a globstar match zero directories", () => {
+    const root = manifest("package.json", {
+      workspaces: ["packages/**/plugins/*", "tools/**"],
+    });
+    const direct = manifest("packages/plugins/foo/package.json", {
+      name: "direct",
+    });
+    const nested = manifest("packages/a/b/plugins/bar/package.json", {
+      name: "nested",
+    });
+    const app = manifest("tools/package.json", {
+      dependencies: { direct: "workspace:*", nested: "workspace:*" },
+    });
+    assert.deepEqual(findUnpinned([root, direct, nested, app]), []);
+  });
+
   it("reads the object form of workspaces", () => {
     const root = manifest("package.json", {
       workspaces: { packages: ["packages/*"] },
