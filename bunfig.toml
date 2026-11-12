@@ -1,0 +1,5 @@
+[install]
+# `bun add` writes the exact version it resolved, never a range.
+exact = true
+# Refuse to install a package published less than 7 days ago.
+minimumReleaseAge = 604800
