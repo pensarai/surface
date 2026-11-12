@@ -19,7 +19,7 @@
  * Run: node scripts/check-dependency-pins.mjs
  */
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SECTIONS = [
@@ -41,18 +41,50 @@ function isExact(spec) {
   return alias !== null && EXACT.test(alias[2]);
 }
 
+/** Whether the root manifest's `workspaces` field includes the directory `dir`. */
+function inWorkspace(dir, patterns) {
+  return patterns.some((pattern) =>
+    pattern.endsWith("/*")
+      ? dirname(dir) === pattern.slice(0, -2) && dir !== pattern.slice(0, -2)
+      : dir === pattern,
+  );
+}
+
+function workspacePatterns(manifests) {
+  const declared = manifests.find((m) => m.path === "package.json")?.pkg
+    .workspaces;
+  return Array.isArray(declared) ? declared : (declared?.packages ?? []);
+}
+
+/**
+ * Names of the packages the root manifest declares as workspace members. A
+ * manifest elsewhere in the repository is a separate project, not a member.
+ */
+export function workspacePackageNames(manifests) {
+  const patterns = workspacePatterns(manifests);
+  const names = new Set();
+  for (const { path, pkg } of manifests) {
+    if (inWorkspace(dirname(path), patterns) && typeof pkg.name === "string")
+      names.add(pkg.name);
+  }
+  return names;
+}
+
 /**
  * Every declared dependency that is not an exact version or a workspace link.
  * `manifests` is a list of `{ path, pkg }`.
  */
 export function findUnpinned(manifests) {
-  const workspaceNames = new Set();
-  for (const { pkg } of manifests) {
-    if (typeof pkg.name === "string") workspaceNames.add(pkg.name);
-  }
+  const patterns = workspacePatterns(manifests);
+  const workspaceNames = workspacePackageNames(manifests);
 
   const violations = [];
   for (const { path, pkg } of manifests) {
+    // Only the root and its members are installed together, so only they can use a workspace link.
+    const inRootInstall =
+      path === "package.json"
+        ? patterns.length > 0
+        : inWorkspace(dirname(path), patterns);
     for (const section of SECTIONS) {
       const entries = pkg[section];
       if (entries === undefined) continue;
@@ -73,6 +105,7 @@ export function findUnpinned(manifests) {
         }
         const internal =
           section !== "overrides" &&
+          inRootInstall &&
           workspaceNames.has(name) &&
           name !== pkg.name;
         if (internal) {
@@ -117,11 +150,18 @@ export function bunfigWritesExact(bunfig) {
   return false;
 }
 
-/** `save-exact=true`, so `npm install <pkg>` writes an exact version. */
+/** `save-exact=true`, so `npm install <pkg>` writes an exact version. npm uses the last top-level assignment. */
 export function npmrcSavesExact(npmrc) {
-  return npmrc
-    .split("\n")
-    .some((raw) => /^save-exact\s*=\s*true$/.test(raw.split(/[#;]/)[0].trim()));
+  let value;
+  let topLevel = true;
+  for (const raw of npmrc.split("\n")) {
+    const line = raw.split(/[#;]/)[0].trim();
+    // npm reads only top-level keys; one under an INI section header is ignored.
+    if (/^\[.*\]$/.test(line)) topLevel = false;
+    const assignment = /^save-exact\s*=\s*(.*)$/.exec(line);
+    if (assignment && topLevel) value = assignment[1].trim();
+  }
+  return value === "true";
 }
 
 function collectManifests(root) {
@@ -129,7 +169,8 @@ function collectManifests(root) {
   const walk = (dir) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const full = join(dir, entry.name);
-      const rel = relative(root, full);
+      // Forward slashes on every platform, so the ignore list and reported paths match.
+      const rel = relative(root, full).split(sep).join("/");
       if (entry.isDirectory()) {
         if (entry.name === "node_modules" || entry.name.startsWith("."))
           continue;
@@ -149,31 +190,44 @@ function collectManifests(root) {
   return out.sort((a, b) => a.path.localeCompare(b.path));
 }
 
+/**
+ * Every project with a lockfile must tell its package manager to write exact
+ * versions. `read(path)` returns a file's text, or undefined when it is missing.
+ */
+export function installConfigProblems(manifests, read) {
+  const problems = [];
+  for (const { path } of manifests) {
+    const dir = dirname(path);
+    const at = (name) => (dir === "." ? name : `${dir}/${name}`);
+    if (read(at("bun.lock")) !== undefined) {
+      const bunfig = read(at("bunfig.toml"));
+      if (bunfig === undefined || !bunfigWritesExact(bunfig)) {
+        problems.push(
+          `${at("bunfig.toml")} must set \`exact = true\` under [install], or \`bun add\` writes ranges.`,
+        );
+      }
+    }
+    if (read(at("package-lock.json")) !== undefined) {
+      const npmrc = read(at(".npmrc"));
+      if (npmrc === undefined || !npmrcSavesExact(npmrc)) {
+        problems.push(
+          `${at(".npmrc")} must set \`save-exact=true\`, or \`npm install <pkg>\` writes ranges.`,
+        );
+      }
+    }
+  }
+  return problems;
+}
+
 function main() {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
   const manifests = collectManifests(root);
   const violations = findUnpinned(manifests);
-
-  const problems = [];
-  if (existsSync(join(root, "bun.lock"))) {
-    const bunfig = join(root, "bunfig.toml");
-    if (
-      !existsSync(bunfig) ||
-      !bunfigWritesExact(readFileSync(bunfig, "utf8"))
-    ) {
-      problems.push(
-        "bunfig.toml must set `exact = true` under [install], or `bun add` writes ranges.",
-      );
-    }
-  }
-  if (existsSync(join(root, "package-lock.json"))) {
-    const npmrc = join(root, ".npmrc");
-    if (!existsSync(npmrc) || !npmrcSavesExact(readFileSync(npmrc, "utf8"))) {
-      problems.push(
-        ".npmrc must set `save-exact=true`, or `npm install <pkg>` writes ranges.",
-      );
-    }
-  }
+  const problems = installConfigProblems(manifests, (path) =>
+    existsSync(join(root, path))
+      ? readFileSync(join(root, path), "utf8")
+      : undefined,
+  );
 
   if (violations.length === 0 && problems.length === 0) {
     console.log(

@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   bunfigWritesExact,
   findUnpinned,
+  installConfigProblems,
   npmrcSavesExact,
 } from "./check-dependency-pins.mjs";
 
@@ -68,21 +69,91 @@ describe("findUnpinned", () => {
   });
 
   it("requires workspace:* for a workspace package", () => {
+    const root = manifest("package.json", {
+      name: "root",
+      workspaces: ["packages/*", "app"],
+    });
     const lib = manifest("packages/lib/package.json", { name: "@scope/lib" });
     const app = manifest("app/package.json", {
       name: "app",
       dependencies: { "@scope/lib": "workspace:*" },
     });
-    assert.deepEqual(findUnpinned([lib, app]), []);
+    assert.deepEqual(findUnpinned([root, lib, app]), []);
 
     for (const spec of ["*", "1.0.0", "workspace:^"]) {
       const loose = manifest("app/package.json", {
         dependencies: { "@scope/lib": spec },
       });
-      const [violation] = findUnpinned([lib, loose]);
+      const [violation] = findUnpinned([root, lib, loose]);
       assert.equal(violation.name, "@scope/lib");
       assert.equal(violation.fix, "use `workspace:*`");
     }
+  });
+
+  it("treats a manifest outside the declared workspaces as a separate project", () => {
+    const root = manifest("package.json", {
+      name: "root",
+      workspaces: ["packages/*"],
+    });
+    const tools = manifest("scripts/package.json", { name: "repo-scripts" });
+    const nested = manifest("packages/lib/tools/package.json", {
+      name: "nested-tools",
+    });
+    const lib = manifest("packages/lib/package.json", {
+      name: "@scope/lib",
+      dependencies: { "repo-scripts": "1.0.0", "nested-tools": "2.0.0" },
+    });
+    assert.deepEqual(findUnpinned([root, tools, nested, lib]), []);
+  });
+
+  it("requires an exact version of a workspace package from a project outside the workspace", () => {
+    const root = manifest("package.json", {
+      name: "root",
+      workspaces: ["packages/*"],
+    });
+    const lib = manifest("packages/lib/package.json", { name: "@scope/lib" });
+    const exact = manifest("scripts/package.json", {
+      dependencies: { "@scope/lib": "1.0.0" },
+    });
+    assert.deepEqual(findUnpinned([root, lib, exact]), []);
+
+    const linked = manifest("scripts/package.json", {
+      dependencies: { "@scope/lib": "workspace:*" },
+    });
+    const [violation] = findUnpinned([root, lib, linked]);
+    assert.equal(violation.fix, "use the exact version from the lockfile");
+  });
+
+  it("requires workspace:* from the root manifest too", () => {
+    const root = manifest("package.json", {
+      workspaces: ["packages/*"],
+      devDependencies: { "@scope/lib": "1.0.0" },
+    });
+    const lib = manifest("packages/lib/package.json", { name: "@scope/lib" });
+    assert.equal(findUnpinned([root, lib])[0].fix, "use `workspace:*`");
+  });
+
+  it("does not treat the workspace root as a member", () => {
+    const root = manifest("package.json", {
+      name: "root",
+      workspaces: ["packages/*"],
+    });
+    const lib = manifest("packages/lib/package.json", {
+      name: "@scope/lib",
+      dependencies: { root: "1.0.0" },
+    });
+    assert.deepEqual(findUnpinned([root, lib]), []);
+  });
+
+  it("reads the object form of workspaces", () => {
+    const root = manifest("package.json", {
+      workspaces: { packages: ["packages/*"] },
+    });
+    const lib = manifest("packages/lib/package.json", { name: "@scope/lib" });
+    const app = manifest("packages/app/package.json", {
+      dependencies: { "@scope/lib": "1.0.0" },
+    });
+    assert.deepEqual(specs([root, lib, app]), ["dependencies.@scope/lib"]);
   });
 
   it("rejects workspace:* for a package that is not in the workspace", () => {
@@ -155,5 +226,58 @@ describe("npmrcSavesExact", () => {
     assert.equal(npmrcSavesExact(""), false);
     assert.equal(npmrcSavesExact("save-exact=false\n"), false);
     assert.equal(npmrcSavesExact("# save-exact=true\n"), false);
+  });
+
+  it("uses the last assignment, as npm does", () => {
+    assert.equal(npmrcSavesExact("save-exact=true\nsave-exact=false\n"), false);
+    assert.equal(npmrcSavesExact("save-exact=false\nsave-exact=true\n"), true);
+  });
+
+  it("ignores an assignment under a section header", () => {
+    assert.equal(npmrcSavesExact("[install]\nsave-exact=true\n"), false);
+    assert.equal(
+      npmrcSavesExact("save-exact=true\n[install]\nsave-exact=false\n"),
+      true,
+    );
+  });
+});
+
+describe("installConfigProblems", () => {
+  const read = (files) => (path) => files[path];
+  const projects = [
+    manifest("package.json", {}),
+    manifest("scripts/package.json", {}),
+  ];
+
+  it("accepts exact settings next to each lockfile", () => {
+    const files = {
+      "bun.lock": "",
+      "bunfig.toml": "[install]\nexact = true\n",
+      "scripts/package-lock.json": "{}",
+      "scripts/.npmrc": "save-exact=true\n",
+    };
+    assert.deepEqual(installConfigProblems(projects, read(files)), []);
+  });
+
+  it("reports a nested npm project without save-exact", () => {
+    const files = {
+      "bun.lock": "",
+      "bunfig.toml": "[install]\nexact = true\n",
+      "scripts/package-lock.json": "{}",
+    };
+    const problems = installConfigProblems(projects, read(files));
+    assert.equal(problems.length, 1);
+    assert.match(problems[0], /^scripts\/\.npmrc must set/);
+  });
+
+  it("reports a bun project whose bunfig does not set exact", () => {
+    const files = { "bun.lock": "", "bunfig.toml": "[install]\n" };
+    const problems = installConfigProblems(projects, read(files));
+    assert.equal(problems.length, 1);
+    assert.match(problems[0], /^bunfig\.toml must set/);
+  });
+
+  it("ignores a project with no lockfile", () => {
+    assert.deepEqual(installConfigProblems(projects, read({})), []);
   });
 });
