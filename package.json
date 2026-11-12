@@ -40,7 +40,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:smoke": "node scripts/smoke-test.mjs",
-    "prepublishOnly": "npm run build && npm run test:smoke"
+    "prepublishOnly": "npm run build && npm run test:smoke",
+    "check:dependency-pins": "node scripts/check-dependency-pins.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
