@@ -145,6 +145,32 @@ describe("findUnpinned", () => {
     assert.deepEqual(findUnpinned([root, lib]), []);
   });
 
+  it("matches nested, deep and negated workspace globs", () => {
+    const root = manifest("package.json", {
+      workspaces: ["packages/*/plugins/*", "tools/**", "!tools/legacy/**"],
+    });
+    const plugin = manifest("packages/a/plugins/p/package.json", {
+      name: "plugin",
+    });
+    const deep = manifest("tools/x/y/package.json", { name: "deep" });
+    const legacy = manifest("tools/legacy/old/package.json", {
+      name: "legacy",
+    });
+    const shallow = manifest("packages/a/package.json", { name: "shallow" });
+    const app = manifest("tools/app/package.json", {
+      dependencies: {
+        plugin: "workspace:*",
+        deep: "workspace:*",
+        legacy: "1.0.0",
+        shallow: "1.0.0",
+      },
+    });
+    assert.deepEqual(
+      findUnpinned([root, plugin, deep, legacy, shallow, app]),
+      [],
+    );
+  });
+
   it("reads the object form of workspaces", () => {
     const root = manifest("package.json", {
       workspaces: { packages: ["packages/*"] },

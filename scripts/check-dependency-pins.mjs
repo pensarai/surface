@@ -41,13 +41,28 @@ function isExact(spec) {
   return alias !== null && EXACT.test(alias[2]);
 }
 
+/** A workspace glob as a RegExp: `*` is one path segment, `**` is any depth. */
+function globToRegExp(glob) {
+  const source = glob
+    .replace(/^\.\//, "")
+    .replace(/\/$/, "")
+    .split("**")
+    .map((part) =>
+      part.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*"),
+    )
+    .join(".*");
+  return new RegExp(`^${source}$`);
+}
+
 /** Whether the root manifest's `workspaces` field includes the directory `dir`. */
 function inWorkspace(dir, patterns) {
-  return patterns.some((pattern) =>
-    pattern.endsWith("/*")
-      ? dirname(dir) === pattern.slice(0, -2) && dir !== pattern.slice(0, -2)
-      : dir === pattern,
-  );
+  const included = patterns.filter((p) => !p.startsWith("!"));
+  const excluded = patterns
+    .filter((p) => p.startsWith("!"))
+    .map((p) => p.slice(1));
+  const matches = (list) =>
+    list.some((pattern) => globToRegExp(pattern).test(dir));
+  return dir !== "." && matches(included) && !matches(excluded);
 }
 
 function workspacePatterns(manifests) {
