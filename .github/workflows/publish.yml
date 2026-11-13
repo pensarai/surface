@@ -4,23 +4,36 @@ on:
   push:
     tags: ["v*"]
 
+# Two tags pushed together would race to publish.
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+permissions: {}
+
 jobs:
   publish:
+    name: publish
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
+      id-token: write # npm provenance
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
+      # A publish never restores a cache another run could have written.
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: latest
+          no-cache: true
 
+      # v4 caches only when `cache` is set, and it is not.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "20"
-          registry-url: "https://registry.npmjs.org"
+          registry-url: "https://registry.npmjs.org" # zizmor: ignore[cache-poisoning]
 
       - run: bun install --frozen-lockfile
 
