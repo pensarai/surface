@@ -4,11 +4,11 @@ on:
   push:
     tags: ["v*"]
 
-# One group per tag: a shared group keeps only one pending run and would
-# drop a tag before it publishes.
+# Tags publish one at a time, in order. `queue: max` keeps every pending run;
+# the default keeps only one and would drop a tag before it publishes.
 concurrency:
-  group: publish-${{ github.ref }}
-  cancel-in-progress: false
+  group: publish
+  queue: max
 
 permissions: {}
 
