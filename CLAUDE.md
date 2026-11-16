@@ -132,7 +132,7 @@ A tag such as `@v4` can be repointed by whoever controls the action's repository
 - **Permissions start empty.** Every workflow sets `permissions: {}`, and each job lists only what it uses. Each write, `id-token` or non-`contents` grant carries a comment saying what needs it: `contents: write # creates the release and its tag`.
 - **Expressions never go inside a script.** Pass `${{ … }}` values to `run:` steps through `env:` and quote them (`"$VERSION"`). Default variables like `$GITHUB_EVENT_NAME` and `$GITHUB_SHA` are already in the environment.
 - **Checkouts set `persist-credentials: false`** unless a later step runs git against the remote. Prefer `gh api` or `gh release` for tags and releases, which need no saved credential.
-- **CI workflows set a `concurrency` group** that cancels superseded PR runs. A release or publish workflow uses a group that queues instead of cancelling.
+- **CI workflows set a `concurrency` group** that cancels superseded PR runs. A workflow where every event must run (a release, a publish, an event handler) uses a shared group with `queue: max`, so runs go one at a time and none is dropped. Without `queue: max` a group keeps only one pending run and cancels the older one, so `cancel-in-progress: false` alone is not a queue.
 - **Never disable an audit or add an ignore to get a check green.** Each ignore in `.github/zizmor.yml` or inline `# zizmor: ignore[...]` comment says why the finding is safe. A new one needs the same, and a review. Otherwise fix the finding, or ask.
 
 ## Dependencies — exact versions
