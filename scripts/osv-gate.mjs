@@ -83,22 +83,37 @@ const isBlocking = (f) =>
   f.malware || f.severity === "critical" || f.severity === "high";
 
 export function compareScans(base, head) {
-  // An advisory is the same one when any id or alias matches on that package:
-  // osv-scanner's group ids are only sorted, so the first id can change
-  // between scans when the duplicate records that apply change.
-  const baseAliases = new Map();
-  for (const f of findingsFromScan(base)) {
-    const known = baseAliases.get(f.pkg) ?? new Set();
-    for (const a of f.aliases) known.add(a);
-    baseAliases.set(f.pkg, known);
-  }
-  const inBase = (f) => f.aliases.some((a) => baseAliases.get(f.pkg)?.has(a));
+  // Two findings are the same advisory on the same package when any id or
+  // alias matches: osv-scanner's group ids are only sorted, so the first id can
+  // change between scans when the duplicate records that apply change.
+  const same = (a, b) =>
+    a.pkg === b.pkg && a.aliases.some((x) => b.aliases.includes(x));
+  const baseFindings = findingsFromScan(base);
   const headFindings = findingsFromScan(head);
-  const introduced = headFindings.filter((f) => !inBase(f));
+  const existing = [];
+  const introduced = [];
+  for (const h of headFindings) {
+    const baseVersions = new Set(
+      baseFindings.filter((b) => same(b, h)).map((b) => b.version),
+    );
+    if (baseVersions.has(h.version)) {
+      existing.push(h);
+      continue;
+    }
+    // A version that did not have this advisory at the base replaces one the
+    // PR removed, so a straight upgrade passes. Affected versions beyond the
+    // ones removed are introduced.
+    const headVersions = new Set(
+      headFindings.filter((x) => same(x, h)).map((x) => x.version),
+    );
+    const removed = [...baseVersions].filter((v) => !headVersions.has(v));
+    const added = [...headVersions].filter((v) => !baseVersions.has(v)).sort();
+    (added.indexOf(h.version) < removed.length ? existing : introduced).push(h);
+  }
   const basePackages = packageVersions(base);
   return {
     introduced,
-    existing: headFindings.filter(inBase),
+    existing,
     blocking: introduced.filter(isBlocking),
     warnings: introduced.filter(
       (f) => !isBlocking(f) && f.severity === "unscored",
@@ -109,38 +124,126 @@ export function compareScans(base, head) {
   };
 }
 
-/** The `[[IgnoredVulns]]` entries of osv-scanner.toml: string and date values only. */
-export function parseIgnoredVulns(toml) {
-  const entries = [];
-  let current = null;
-  for (const raw of toml.split("\n")) {
-    const line = raw.replace(/^\s+|\s+$/g, "");
-    if (!line || line.startsWith("#")) continue;
-    if (line.startsWith("[")) {
-      current = line === "[[IgnoredVulns]]" ? {} : null;
-      if (current) entries.push(current);
-      continue;
-    }
-    if (!current) continue;
-    const m = /^([A-Za-z]+)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^#\s]+))/.exec(line);
-    if (!m) throw new Error(`osv-scanner.toml: cannot read "${line}"`);
-    current[m[1]] = m[2] !== undefined ? JSON.parse(`"${m[2]}"`) : m[3];
+/** The line without its comment; a `#` inside a quoted string is kept. */
+function stripComment(line) {
+  let quote = null;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (quote) {
+      if (quote === '"' && c === "\\") i++;
+      else if (c === quote) quote = null;
+    } else if (c === '"' || c === "'") quote = c;
+    else if (c === "#") return line.slice(0, i);
   }
-  return entries;
+  return line;
 }
 
-/** Every exception must name an advisory and say why it is accepted. */
-export function invalidExceptions(entries) {
-  return entries.flatMap((e, i) => {
+function parseValue(raw, where) {
+  if (raw.startsWith('"')) {
+    const m = /^"((?:[^"\\]|\\.)*)"$/.exec(raw);
+    if (!m) throw new Error(`${where}: cannot read the string ${raw}`);
+    return JSON.parse(`"${m[1]}"`);
+  }
+  if (raw.startsWith("'")) {
+    const m = /^'([^']*)'$/.exec(raw);
+    if (!m) throw new Error(`${where}: cannot read the string ${raw}`);
+    return m[1];
+  }
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  // Dates, numbers, and one-line arrays or inline tables are kept as text.
+  return raw;
+}
+
+/**
+ * The tables of osv-scanner.toml that can hide a finding. The file is held to
+ * an allowlist so the gate reads it exactly as osv-scanner does: comments,
+ * [[IgnoredVulns]] and [[PackageOverrides]] tables, and one-line `key = value`
+ * entries inside them. Anything else (a top-level key, another table, an
+ * inline table, a multi-line value, a line it cannot read) is an error, never
+ * skipped, so an exception cannot slip past the reason check.
+ */
+export function parseOsvConfig(toml) {
+  const config = { IgnoredVulns: [], PackageOverrides: [] };
+  let current = null;
+  toml.split("\n").forEach((raw, n) => {
+    const line = stripComment(raw).trim();
+    if (!line) return;
+    const where = `osv-scanner.toml line ${n + 1}`;
+    const header = /^\[\[\s*([A-Za-z]+)\s*\]\]$/.exec(line);
+    if (header) {
+      // osv-scanner matches table and key names case-insensitively, so the gate does too.
+      const table = Object.keys(config).find(
+        (name) => name.toLowerCase() === header[1].toLowerCase(),
+      );
+      if (!table)
+        throw new Error(
+          `${where}: the gate does not check [[${header[1]}]] tables`,
+        );
+      current = {};
+      config[table].push(current);
+      return;
+    }
+    if (line.startsWith("["))
+      throw new Error(
+        `${where}: the gate cannot check "${line}"; use [[IgnoredVulns]] or [[PackageOverrides]] with one-line keys`,
+      );
+    const kv = /^([A-Za-z][\w.-]*)\s*=\s*(.+)$/.exec(line);
+    if (!kv) throw new Error(`${where}: cannot read "${line}"`);
+    const [, key, value] = kv;
+    if (value.startsWith('"""') || value.startsWith("'''"))
+      throw new Error(`${where}: the gate cannot check multi-line strings`);
+    // A top-level key can hold the same exceptions as an array of inline
+    // tables (IgnoredVulns = [{ ... }]), so none is allowed.
+    if (!current)
+      throw new Error(
+        `${where}: the gate allows no top-level settings; put exceptions in [[IgnoredVulns]] or [[PackageOverrides]] tables`,
+      );
+    // An inline table can spell an ignore many ways ({ "ignore" = true }, ...);
+    // dotted keys can only spell it one way, which the gate checks exactly.
+    if (value.startsWith("{"))
+      throw new Error(
+        `${where}: write dotted keys (vulnerability.ignore = true), not inline tables`,
+      );
+    current[key.toLowerCase()] = parseValue(value, where);
+  });
+  return config;
+}
+
+/** A package override hides findings when any of its keys ignores the package or its vulnerabilities. */
+function overrideHides(override) {
+  return Object.entries(override).some(
+    ([key, value]) => /(^|\.)ignore$/.test(key) && value === true,
+  );
+}
+
+const hasReason = (entry) =>
+  typeof entry.reason === "string" && entry.reason.trim() !== "";
+
+/**
+ * Every way osv-scanner.toml can hide a finding needs a reason: an ignored
+ * advisory must also name it, and a package override that ignores the package
+ * or its vulnerabilities is held to the same rule.
+ */
+export function invalidExceptions(config) {
+  const ignored = config.IgnoredVulns.flatMap((e, i) => {
     const problems = [];
     if (typeof e.id !== "string" || !e.id)
       problems.push(`entry ${i + 1} has no id`);
-    if (typeof e.reason !== "string" || !e.reason.trim())
+    if (!hasReason(e))
       problems.push(
         `${typeof e.id === "string" ? e.id : `entry ${i + 1}`} has no reason`,
       );
     return problems;
   });
+  const overrides = config.PackageOverrides.flatMap((o, i) =>
+    overrideHides(o) && !hasReason(o)
+      ? [
+          `${typeof o.name === "string" ? o.name : `override ${i + 1}`} ignores vulnerabilities without a reason`,
+        ]
+      : [],
+  );
+  return [...ignored, ...overrides];
 }
 
 const SEVERITY_ORDER = ["critical", "high", "unscored", "medium", "low"];
@@ -342,9 +445,14 @@ async function main() {
   process.chdir(git(["rev-parse", "--show-toplevel"]).trim());
 
   const config = resolve("osv-scanner.toml");
-  const problems = invalidExceptions(
-    parseIgnoredVulns(readFileSync(config, "utf8")),
-  );
+  let problems;
+  try {
+    problems = invalidExceptions(parseOsvConfig(readFileSync(config, "utf8")));
+  } catch (err) {
+    // A config the gate cannot read is a failed gate, reported where it points.
+    console.log(`::error file=osv-scanner.toml::${err.message}`);
+    process.exit(1);
+  }
   if (problems.length) {
     for (const p of problems)
       console.log(`::error file=osv-scanner.toml::Exception ${p}`);
