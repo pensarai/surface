@@ -191,6 +191,24 @@ describe("compareScans", () => {
     assert.equal(findingsFromScan(scan)[0].fixAvailable, false);
   });
 
+  it("finds a fix listed on any record in the advisory group", () => {
+    const scan = scanOf(
+      pkg("a", "1.0.0", [{ id: "CVE-2026-9", score: "8", fixed: false }]),
+    );
+    const p = scan.results[0].packages[0];
+    p.groups[0].ids.push("GHSA-9");
+    p.vulnerabilities.push({
+      id: "GHSA-9",
+      affected: [
+        {
+          package: { name: "a", ecosystem: "npm" },
+          ranges: [{ events: [{ introduced: "0" }, { fixed: "1.0.1" }] }],
+        },
+      ],
+    });
+    assert.equal(findingsFromScan(scan)[0].fixAvailable, true);
+  });
+
   it("handles a scan with no results", () => {
     assert.deepEqual(
       compareScans({ results: null }, { results: [] }).introduced,
@@ -245,6 +263,10 @@ describe("parseOsvConfig and invalidExceptions", () => {
       "[[PackageOverrides]]",
       'name = "e"',
       'license.override = ["MIT"]',
+      ,
+      "[[PackageOverrides]]",
+      'name = "f"',
+      "license.ignore = true",
     ].join("\n");
     assert.deepEqual(invalidExceptions(parseOsvConfig(toml)), [
       "a ignores vulnerabilities without a reason",

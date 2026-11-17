@@ -63,7 +63,10 @@ export function findingsFromScan(scan) {
         ...severityOf(group.max_severity),
         malware: ids.some((i) => i.startsWith("MAL-")),
         // An advisory can cover several packages; only this package's entries say whether it has a fix.
-        fixAvailable: (vuln?.affected ?? [])
+        // Every record in the group is the same advisory; any of them may list
+        // the fix, but only for this package's entries.
+        fixAvailable: group.ids
+          .flatMap((gid) => vulns.get(gid)?.affected ?? [])
           .filter(
             (a) =>
               a.package?.name === p.package.name &&
@@ -220,9 +223,8 @@ export function parseOsvConfig(toml) {
 
 /** A package override hides findings when any of its keys ignores the package or its vulnerabilities. */
 function overrideHides(override) {
-  return Object.entries(override).some(
-    ([key, value]) => /(^|\.)ignore$/.test(key) && value === true,
-  );
+  // license.ignore only skips license checks; vulnerabilities are still reported.
+  return override.ignore === true || override["vulnerability.ignore"] === true;
 }
 
 const hasReason = (entry) =>
