@@ -62,11 +62,19 @@ export function findingsFromScan(scan) {
         version: p.package.version,
         ...severityOf(group.max_severity),
         malware: ids.some((i) => i.startsWith("MAL-")),
-        fixAvailable: (vuln?.affected ?? []).some((a) =>
-          (a.ranges ?? []).some((r) =>
-            (r.events ?? []).some((e) => "fixed" in e),
+        // An advisory can cover several packages; only this package's entries say whether it has a fix.
+        fixAvailable: (vuln?.affected ?? [])
+          .filter(
+            (a) =>
+              a.package?.name === p.package.name &&
+              (!a.package.ecosystem ||
+                a.package.ecosystem === p.package.ecosystem),
+          )
+          .some((a) =>
+            (a.ranges ?? []).some((r) =>
+              (r.events ?? []).some((e) => "fixed" in e),
+            ),
           ),
-        ),
         summary: vuln?.summary ?? "",
       });
     }

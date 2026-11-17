@@ -18,6 +18,7 @@ const pkg = (name, version, advisories = []) => ({
     summary: `${a.id} summary`,
     affected: [
       {
+        package: { name, ecosystem: "npm" },
         ranges: [
           {
             events:
@@ -177,6 +178,17 @@ describe("compareScans", () => {
       pkg("qs", "3.0.0", [{ id: "GHSA-qs", score: "7.5" }]),
     );
     assert.deepEqual(compareScans(base, head).blocking, []);
+  });
+
+  it("reads the fix from the reported package only", () => {
+    const scan = scanOf(
+      pkg("a", "1.0.0", [{ id: "GHSA-multi", score: "8", fixed: false }]),
+    );
+    scan.results[0].packages[0].vulnerabilities[0].affected.push({
+      package: { name: "other", ecosystem: "npm" },
+      ranges: [{ events: [{ introduced: "0" }, { fixed: "2.0.0" }] }],
+    });
+    assert.equal(findingsFromScan(scan)[0].fixAvailable, false);
   });
 
   it("handles a scan with no results", () => {
