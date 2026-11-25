@@ -3,6 +3,7 @@ import { describe, it, mock } from "node:test";
 import {
   compareScans,
   findingsFromScan,
+  ignoredPackagesFrom,
   invalidExceptions,
   lockedPackages,
   lookupLicenses,
@@ -10,6 +11,7 @@ import {
   parseJsonWithTrailingCommas,
   parseOsvConfig,
   renderSummary,
+  repoPath,
   scanAndCompare,
   severityOf,
   splitBySource,
@@ -353,6 +355,28 @@ describe("scanAndCompare", () => {
     assert.deepEqual(calls, [["/head/new/bun.lock"]]);
     assert.deepEqual(gated.base, { results: [] });
     assert.deepEqual(ids(gated.result.blocking), ["GHSA-qs"]);
+  });
+
+  it("passes on the packages the run's exceptions left out", () => {
+    const ignoredPackages = new Set(["js-yaml@4.3.2"]);
+    const scanner = () => ({
+      results: [at("/head/bun.lock", qs("1.0.0"))],
+      ignoredPackages,
+    });
+    const [gated] = scanAndCompare(
+      [{ base: null, head: "/head/bun.lock" }],
+      "osv-scanner.toml",
+      scanner,
+    );
+    assert.equal(gated.ignored, ignoredPackages);
+    const [none] = scanAndCompare(
+      [{ base: null, head: "/head/bun.lock" }],
+      "osv-scanner.toml",
+      () => ({
+        results: [at("/head/bun.lock", qs("1.0.0"))],
+      }),
+    );
+    assert.deepEqual(none.ignored, new Set());
   });
 });
 
@@ -776,6 +800,9 @@ const BUN_LOCK = `{
     "gitdep": ["gitdep@git+https://github.com/a/gitdep.git#0123456", {}, "0123456"],
     "ghdep": ["ghdep@github:a/ghdep#0123456", {}, "a-ghdep-0123456"],
     "tardep": ["tardep@https://example.com/tardep-1.0.0.tgz", {}],
+    "localtar": ["localtar@./vendor/localtar-1.0.0.tgz", {}],
+    "uptar": ["uptar@../vendor/uptar-1.0.0.tgz", {}],
+    "abstar": ["abstar@/opt/vendor/abstar-1.0.0.tgz", {}],
   },
 }
 `;
@@ -815,8 +842,8 @@ describe("lockedPackages", () => {
       "left-pad@1.3.0",
       "string-width@4.2.3",
     ]);
-    // Workspace, link, file, root, Git, GitHub and tarball entries.
-    assert.equal(locked.other, 7);
+    // Workspace, link, file, root, Git, GitHub, tarball URL and local tarball entries.
+    assert.equal(locked.other, 10);
   });
 
   it("reads the distinct registry packages of a package-lock.json", () => {
@@ -906,7 +933,7 @@ describe("unreadPackages", () => {
       pkg("@scope/pkg", "2.0.0"),
       pkg("ws", "workspace:ws"),
     );
-    assert.deepEqual(unreadPackages(locked, scan, []), {
+    assert.deepEqual(unreadPackages(locked, scan, new Set()), {
       total: 3,
       other: 2,
       missing: [],
@@ -916,7 +943,8 @@ describe("unreadPackages", () => {
 
   it("names each registry package the scan is missing", () => {
     assert.deepEqual(
-      unreadPackages(locked, scanOf(pkg("left-pad", "1.3.0")), []).missing,
+      unreadPackages(locked, scanOf(pkg("left-pad", "1.3.0")), new Set())
+        .missing,
       ["@scope/pkg@2.0.0", "js-yaml@4.3.2"],
     );
   });
@@ -928,37 +956,21 @@ describe("unreadPackages", () => {
       pkg("js-yaml", ""),
       pkg("@scope/pkg", "2.0.0"),
     );
-    assert.deepEqual(unreadPackages(locked, scan, []).missing, [
+    assert.deepEqual(unreadPackages(locked, scan, new Set()).missing, [
       "js-yaml@4.3.2",
     ]);
   });
 
-  it("excepts a package a [[PackageOverrides]] entry hides with ignore = true", () => {
+  it("excepts a package osv-scanner says an override left out, and only that version", () => {
     const scan = scanOf(pkg("left-pad", "1.3.0"), pkg("@scope/pkg", "2.0.0"));
-    const hides = (o) =>
-      unreadPackages(locked, scan, [{ ignore: true, reason: "r", ...o }]);
-    assert.deepEqual(hides({ name: "js-yaml" }), {
+    assert.deepEqual(unreadPackages(locked, scan, new Set(["js-yaml@4.3.2"])), {
       total: 3,
       other: 2,
       missing: [],
       hidden: ["js-yaml@4.3.2"],
     });
     assert.deepEqual(
-      hides({ name: "js-yaml", version: "4.3.2", ecosystem: "npm" }).hidden,
-      ["js-yaml@4.3.2"],
-    );
-    // Only the version and ecosystem it names, and only an ignore of the whole package.
-    assert.deepEqual(hides({ name: "js-yaml", version: "4.0.0" }).missing, [
-      "js-yaml@4.3.2",
-    ]);
-    assert.deepEqual(hides({ name: "js-yaml", ecosystem: "PyPI" }).missing, [
-      "js-yaml@4.3.2",
-    ]);
-    assert.deepEqual(hides({ name: "left-pad" }).missing, ["js-yaml@4.3.2"]);
-    assert.deepEqual(
-      unreadPackages(locked, scan, [
-        { name: "js-yaml", "vulnerability.ignore": true, reason: "r" },
-      ]).missing,
+      unreadPackages(locked, scan, new Set(["js-yaml@4.0.0"])).missing,
       ["js-yaml@4.3.2"],
     );
   });
@@ -973,8 +985,64 @@ describe("unreadPackages", () => {
       pkg("https://github.com/a/gitdep", ""),
     );
     assert.deepEqual(
-      unreadPackages(lockedPackages("bun.lock", BUN_LOCK), scan, []).missing,
+      unreadPackages(lockedPackages("bun.lock", BUN_LOCK), scan, new Set())
+        .missing,
       [],
+    );
+  });
+});
+
+describe("ignoredPackagesFrom", () => {
+  it("reads each npm package osv-scanner 2.7.1 logs as filtered out, scoped names included", () => {
+    const log = [
+      "Scanned /w/bun.lock file and found 479 packages",
+      "Package npm/@babel/code-frame/7.29.0 has been filtered out because: generated code only",
+      "Package npm/js-yaml/4.3.2 has been filtered out because: a reason: with colons",
+      "Package PyPI/requests/2.0.0 has been filtered out because: not npm",
+      "Filtered 3 ignored package/s from the scan.",
+      "GHSA-1234 and 1 alias have been filtered out because: unrelated advisory",
+    ].join("\n");
+    assert.deepEqual(
+      ignoredPackagesFrom(log),
+      new Set(["@babel/code-frame@7.29.0", "js-yaml@4.3.2"]),
+    );
+  });
+
+  it("excuses nothing when the log has no such line", () => {
+    assert.deepEqual(ignoredPackagesFrom(""), new Set());
+    assert.deepEqual(ignoredPackagesFrom(undefined), new Set());
+    assert.deepEqual(
+      ignoredPackagesFrom("Package js-yaml was skipped"),
+      new Set(),
+    );
+  });
+});
+
+describe("repoPath", () => {
+  it("reads a path relative to the repository root, or an absolute one inside it", () => {
+    assert.equal(repoPath("bun.lock", "/w/repo"), "bun.lock");
+    assert.equal(
+      repoPath("./scripts/package-lock.json", "/w/repo"),
+      "scripts/package-lock.json",
+    );
+    assert.equal(
+      repoPath("/w/repo/scripts/package-lock.json", "/w/repo"),
+      "scripts/package-lock.json",
+    );
+  });
+
+  it("rejects a path outside the repository, or the root itself", () => {
+    assert.throws(
+      () => repoPath("/elsewhere/bun.lock", "/w/repo"),
+      /not a file in this repository/,
+    );
+    assert.throws(
+      () => repoPath("../bun.lock", "/w/repo"),
+      /not a file in this repository/,
+    );
+    assert.throws(
+      () => repoPath(".", "/w/repo"),
+      /not a file in this repository/,
     );
   });
 });
