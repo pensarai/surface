@@ -422,14 +422,14 @@ function defaultBranchRef() {
   return res.stdout.trim();
 }
 
-function scan(lockfile, config) {
+function scan(lockfile, config, { download = true } = {}) {
   const args = [
     "scan",
     "source",
     // Full offline mode: only the advisory database download below touches the
     // network; no other scanner feature can send the dependency list anywhere.
     "--offline",
-    "--download-offline-databases",
+    ...(download ? ["--download-offline-databases"] : []),
     "--all-packages",
     "--format",
     "json",
@@ -449,6 +449,17 @@ function scan(lockfile, config) {
       `osv-scanner failed on ${lockfile} (exit ${res.status}): ${res.stderr}`,
     );
   return JSON.parse(res.stdout);
+}
+
+/** Scans the base and head lockfiles the same way, then compares them. */
+export function scanAndCompare(baseLock, headLock, config, scanner = scan) {
+  // Both scans honor the exceptions: a finding hidden only on the head would
+  // read as a version the PR removed, and let a new affected version replace it.
+  const base = scanner(baseLock, config, { download: true });
+  // The head reads the database the base scan just downloaded, so an advisory
+  // published between the two scans cannot look introduced.
+  const head = scanner(headLock, config, { download: false });
+  return compareScans(base, head);
 }
 
 async function main() {
@@ -473,17 +484,16 @@ async function main() {
 
   const mergeBase = git(["merge-base", baseRef, "HEAD"]).trim();
   const baseDir = mkdtempSync(join(tmpdir(), "osv-gate-base-"));
-  let baseScan;
+  let result;
   try {
     // Same file name as the head lockfile, which is how osv-scanner picks its parser.
     const baseLock = join(baseDir, basename(opts.lockfile));
     writeFileSync(baseLock, git(["show", `${mergeBase}:${opts.lockfile}`]));
-    baseScan = scan(baseLock);
+    result = scanAndCompare(baseLock, opts.lockfile, config);
   } finally {
     rmSync(baseDir, { recursive: true, force: true });
   }
 
-  const result = compareScans(baseScan, scan(opts.lockfile, config));
   const reportOnly = opts.report.map((path) => ({
     path,
     findings: findingsFromScan(scan(path)),

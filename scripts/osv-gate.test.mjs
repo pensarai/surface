@@ -8,6 +8,7 @@ import {
   parseArgs,
   parseOsvConfig,
   renderSummary,
+  scanAndCompare,
   severityOf,
 } from "./osv-gate.mjs";
 
@@ -214,6 +215,46 @@ describe("compareScans", () => {
       compareScans({ results: null }, { results: [] }).introduced,
       [],
     );
+  });
+});
+
+describe("scanAndCompare", () => {
+  // Stands in for osv-scanner: an override in the config accepts GHSA-qs on qs@1.0.0 only.
+  const fakeScanner = (calls) => (lockfile, config, opts) => {
+    calls.push({ lockfile, config, ...opts });
+    const versions = lockfile === "base.lock" ? ["1.0.0"] : ["1.0.0", "2.0.0"];
+    return scanOf(
+      ...versions
+        .filter((v) => !(config && v === "1.0.0"))
+        .map((v) => pkg("qs", v, [{ id: "GHSA-qs", score: "7.5" }])),
+    );
+  };
+
+  it("blocks a new affected version beside one an exception accepts", () => {
+    const result = scanAndCompare(
+      "base.lock",
+      "head.lock",
+      "osv-scanner.toml",
+      fakeScanner([]),
+    );
+    assert.deepEqual(
+      result.blocking.map((f) => f.version),
+      ["2.0.0"],
+    );
+  });
+
+  it("applies the config to both scans and downloads the database once", () => {
+    const calls = [];
+    scanAndCompare(
+      "base.lock",
+      "head.lock",
+      "osv-scanner.toml",
+      fakeScanner(calls),
+    );
+    assert.deepEqual(calls, [
+      { lockfile: "base.lock", config: "osv-scanner.toml", download: true },
+      { lockfile: "head.lock", config: "osv-scanner.toml", download: false },
+    ]);
   });
 });
 
