@@ -30,7 +30,7 @@ bun run src/cli.ts map <target> -o endpoints.json --json
 import { map, EndpointIndex } from "./src/index.ts";
 
 # Tests
-bun test
+bun run test
 
 # Type check, lint, format
 bun run tsc
