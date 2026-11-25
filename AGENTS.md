@@ -2,6 +2,18 @@
 
 White-box endpoint discovery for source code. Scans repositories to extract HTTP routes, API endpoints, and entrypoints across 16 web frameworks.
 
+This is the instruction file for every coding agent working in this repo. `CLAUDE.md` is a symlink to it, so Claude Code, Codex and any other agent that looks for either name load the same rules.
+
+## Repo contract
+
+| Key        | Value                                                                                                                                                                                                                                                                                                                                         |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Trunk      | `main`, the default branch                                                                                                                                                                                                                                                                                                                    |
+| Bootstrap  | `bun install`. Needs [Bun](https://bun.sh); the `scripts/*.mjs` checks and the smoke test run under Node (`engines`: `>=18`, CI uses 20).                                                                                                                                                                                                     |
+| Validation | `bun run lint`, `bun run tsc`, `bun run format:check`, `bun run check:dependency-pins`, `bun run build` then `bun run test:smoke`, and `bun run test` (vitest). CI's `build-and-test` job runs all of these except `bun run test`, plus `node --test scripts/check-dependency-pins.test.mjs`. CI also runs `zizmor` and the osv gate (below). |
+| Format     | `bun run format` (Prettier on the whole repo)                                                                                                                                                                                                                                                                                                 |
+| Issues     | GitHub issues in `pensarai/surface`                                                                                                                                                                                                                                                                                                           |
+
 ## Commands
 
 ```bash
