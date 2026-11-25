@@ -459,20 +459,30 @@ function scan(lockfiles, config) {
 
 /**
  * Splits one osv-scanner result into a scan per lockfile, by the path it
- * reports for each source. A lockfile with no packages gets no result and
- * reads as empty; a result for any other path fails the gate.
+ * reports for each source. A result for any other path fails the gate, and so
+ * does a lockfile with no packages in the result: osv-scanner returns none when
+ * exceptions hide every package, which would switch the gate off, or when the
+ * lockfile has no packages at all.
  */
-export function splitBySource(scanned, lockfiles) {
-  const scans = new Map(lockfiles.map((l) => [l, { results: [] }]));
+export function splitBySource(scanned, lockfiles, platform = process.platform) {
+  // osv-scanner reports Windows paths with forward slashes; Node returns them with backslashes.
+  const key = (path) =>
+    platform === "win32" ? path?.replaceAll("\\", "/") : path;
+  const scans = new Map(lockfiles.map((l) => [key(l), { results: [] }]));
   for (const r of scanned.results ?? []) {
-    const own = scans.get(r.source?.path);
+    const own = scans.get(key(r.source?.path));
     if (!own)
       throw new Error(
         `osv-scanner reported ${r.source?.path}, which is not a scanned lockfile`,
       );
     own.results.push(r);
   }
-  return lockfiles.map((l) => scans.get(l));
+  for (const lockfile of lockfiles)
+    if (!packagesOf(scans.get(key(lockfile))).length)
+      throw new Error(
+        `osv-scanner returned no packages for ${lockfile}: exceptions hide every package, or it has none`,
+      );
+  return lockfiles.map((l) => scans.get(key(l)));
 }
 
 /** Scans the base and head lockfiles in one run, then compares them. */
