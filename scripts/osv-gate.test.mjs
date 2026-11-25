@@ -10,6 +10,7 @@ import {
   renderSummary,
   scanAndCompare,
   severityOf,
+  splitBySource,
 } from "./osv-gate.mjs";
 
 const pkg = (name, version, advisories = []) => ({
@@ -219,21 +220,28 @@ describe("compareScans", () => {
 });
 
 describe("scanAndCompare", () => {
+  const at = (path, ...packages) => ({
+    source: { path, type: "lockfile" },
+    packages,
+  });
+  const qs = (version) => pkg("qs", version, [{ id: "GHSA-qs", score: "7.5" }]);
   // Stands in for osv-scanner: an override in the config accepts GHSA-qs on qs@1.0.0 only.
-  const fakeScanner = (calls) => (lockfile, config, opts) => {
-    calls.push({ lockfile, config, ...opts });
-    const versions = lockfile === "base.lock" ? ["1.0.0"] : ["1.0.0", "2.0.0"];
-    return scanOf(
-      ...versions
-        .filter((v) => !(config && v === "1.0.0"))
-        .map((v) => pkg("qs", v, [{ id: "GHSA-qs", score: "7.5" }])),
-    );
+  const fakeScanner = (calls) => (lockfiles, config) => {
+    calls.push({ lockfiles, config });
+    const shown = (versions) =>
+      versions.filter((v) => !(config && v === "1.0.0")).map(qs);
+    return {
+      results: [
+        at("/base/bun.lock", ...shown(["1.0.0"])),
+        at("/head/bun.lock", ...shown(["1.0.0", "2.0.0"])),
+      ],
+    };
   };
 
   it("blocks a new affected version beside one an exception accepts", () => {
     const result = scanAndCompare(
-      "base.lock",
-      "head.lock",
+      "/base/bun.lock",
+      "/head/bun.lock",
       "osv-scanner.toml",
       fakeScanner([]),
     );
@@ -243,18 +251,78 @@ describe("scanAndCompare", () => {
     );
   });
 
-  it("applies the config to both scans and downloads the database once", () => {
+  it("scans both lockfiles in one run under the config", () => {
     const calls = [];
     scanAndCompare(
-      "base.lock",
-      "head.lock",
+      "/base/bun.lock",
+      "/head/bun.lock",
       "osv-scanner.toml",
       fakeScanner(calls),
     );
     assert.deepEqual(calls, [
-      { lockfile: "base.lock", config: "osv-scanner.toml", download: true },
-      { lockfile: "head.lock", config: "osv-scanner.toml", download: false },
+      {
+        lockfiles: ["/base/bun.lock", "/head/bun.lock"],
+        config: "osv-scanner.toml",
+      },
     ]);
+  });
+
+  it("blocks an advisory in an ecosystem only the head has", () => {
+    const gitDep = {
+      ...pkg("https://github.com/a/b", "1.0.0", [
+        { id: "GHSA-git", score: "9.8" },
+      ]),
+      package: {
+        name: "https://github.com/a/b",
+        version: "1.0.0",
+        ecosystem: "GIT",
+      },
+    };
+    const scanner = () => ({
+      results: [
+        at("/base/bun.lock", qs("2.0.0")),
+        at("/head/bun.lock", qs("2.0.0"), gitDep),
+      ],
+    });
+    const result = scanAndCompare(
+      "/base/bun.lock",
+      "/head/bun.lock",
+      "osv-scanner.toml",
+      scanner,
+    );
+    assert.deepEqual(ids(result.blocking), ["GHSA-git"]);
+    assert.deepEqual(ids(result.existing), ["GHSA-qs"]);
+  });
+
+  it("fails closed when the scanner fails", () => {
+    const scanner = () => {
+      throw new Error("osv-scanner failed (exit 127)");
+    };
+    assert.throws(
+      () => scanAndCompare("/base/bun.lock", "/head/bun.lock", null, scanner),
+      /exit 127/,
+    );
+  });
+});
+
+describe("splitBySource", () => {
+  const at = (path) => ({
+    source: { path, type: "lockfile" },
+    packages: [pkg(path, "1.0.0")],
+  });
+
+  it("splits results by lockfile path, and reads a lockfile with no result as empty", () => {
+    assert.deepEqual(
+      splitBySource({ results: [at("/b"), at("/a")] }, ["/a", "/b", "/c"]),
+      [{ results: [at("/a")] }, { results: [at("/b")] }, { results: [] }],
+    );
+  });
+
+  it("fails on a result for a path the gate did not scan", () => {
+    assert.throws(
+      () => splitBySource({ results: [at("/elsewhere")] }, ["/a", "/b"]),
+      /not a scanned lockfile/,
+    );
   });
 });
 
@@ -386,6 +454,36 @@ describe("parseOsvConfig and invalidExceptions", () => {
     assert.throws(
       () => parseOsvConfig('[[IgnoredVulns]]\nid = "unterminated\n'),
       /cannot read the string/,
+    );
+  });
+
+  it("rejects a key set twice in one entry, in any case", () => {
+    assert.throws(
+      () =>
+        parseOsvConfig(
+          '[[PackageOverrides]]\nname = "a"\nignore = true\nIgnore = false\nreason = "x"',
+        ),
+      /line 4: Ignore is already set/,
+    );
+    assert.throws(
+      () =>
+        parseOsvConfig(
+          '[[IgnoredVulns]]\nid = "GHSA-1"\nreason = "x"\nREASON = ""',
+        ),
+      /already set/,
+    );
+    assert.throws(
+      () =>
+        parseOsvConfig(
+          "[[PackageOverrides]]\nvulnerability.ignore = true\nVulnerability.Ignore = false",
+        ),
+      /already set/,
+    );
+    assert.deepEqual(
+      parseOsvConfig(
+        '[[IgnoredVulns]]\nid = "GHSA-1"\n[[IgnoredVulns]]\nid = "GHSA-2"',
+      ).IgnoredVulns,
+      [{ id: "GHSA-1" }, { id: "GHSA-2" }],
     );
   });
 
